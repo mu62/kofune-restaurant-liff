@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>KOFUNE 飲食店会員登録</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #faf8f5;
+    --fg: #2a2420;
+    --accent: #1f7a4d;
+    --accent-dark: #175c3a;
+    --border: #ddd5cb;
+    --danger: #c0392b;
+    --muted: #7a7168;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    padding: 20px 16px 48px;
+  }
+  .wrap { max-width: 480px; margin: 0 auto; }
+  h1 {
+    font-size: 20px;
+    margin: 8px 0 4px;
+  }
+  .lead {
+    font-size: 13px;
+    color: var(--muted);
+    margin: 0 0 20px;
+    line-height: 1.6;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .field { margin-bottom: 18px; }
+  label.field-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  input[type="email"], input[type="text"], input[type="url"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--fg);
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .choice-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    font-size: 14px;
+    border-bottom: 1px solid #f1ece5;
+  }
+  .choice-row:last-child { border-bottom: none; }
+  .choice-row input { width: 18px; height: 18px; flex-shrink: 0; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .agree-box {
+    background: #f6f3ee;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .agree-box .choice-row { border-bottom: none; align-items: flex-start; }
+  button#submitBtn {
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: 10px;
+    margin-top: 8px;
+    cursor: pointer;
+  }
+  button#submitBtn:disabled { background: #b9b2a8; }
+  button#submitBtn:active:not(:disabled) { background: var(--accent-dark); }
+  #status {
+    text-align: center;
+    padding: 60px 16px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  #errorMsg {
+    color: var(--danger);
+    font-size: 13px;
+    margin-top: 12px;
+    display: none;
+  }
+  #doneScreen {
+    display: none;
+    text-align: center;
+    padding: 40px 16px;
+  }
+  #doneScreen .icon { font-size: 40px; margin-bottom: 12px; }
+  #doneScreen p { font-size: 14px; line-height: 1.7; color: var(--fg); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="status">読み込み中...</div>
+
+  <div id="formScreen" hidden>
+    <h1>飲食店会員登録</h1>
+    <p class="lead">卸価格でのご購入には審査が必要です。以下の内容をご入力のうえ送信してください。審査結果はこのLINEアカウントにお知らせします。</p>
+
+    <form id="appForm" class="card">
+      <div class="field">
+        <label class="field-label" for="email">アカウント登録メールアドレス <span style="color:var(--danger)">*</span></label>
+        <input type="email" id="email" name="email" required placeholder="you@example.com">
+      </div>
+
+      <div class="field">
+        <label class="field-label">お店での役割（複数選択可） <span style="color:var(--danger)">*</span></label>
+        <div id="rolesGroup">
+          <label class="choice-row"><input type="checkbox" name="roles" value="ドリンク担当"> ドリンク担当</label>
+          <label class="choice-row"><input type="checkbox" name="roles" value="シェフ・料理長"> シェフ・料理長</label>
+          <label class="choice-row"><input type="checkbox" name="roles" value="店長"> 店長</label>
+          <label class="choice-row"><input type="checkbox" name="roles" value="オーナー"> オーナー</label>
+          <label class="choice-row"><input type="checkbox" name="roles" value="その他"> その他</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="shopUrl">お店のURL（公式HP・SNS・GoogleMap・グルメサイト等） <span style="color:var(--danger)">*</span></label>
+        <input type="url" id="shopUrl" name="shopUrl" required placeholder="https://...">
+      </div>
+
+      <div class="field">
+        <label class="field-label">月の発注数量（目安） <span style="color:var(--danger)">*</span></label>
+        <div id="volumeGroup">
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="未定" required> 未定</label>
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="1〜2本"> 1〜2本</label>
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="3〜4本"> 3〜4本</label>
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="5〜9本"> 5〜9本</label>
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="10本以上"> 10本以上</label>
+        </div>
+      </div>
+
+      <div class="field agree-box">
+        <label class="choice-row">
+          <input type="checkbox" id="agree" name="agree" required>
+          <span>卸売商品は自店舗のお客様への提供に限り、個人消費や第三者への転売は行わないことに同意します。なお、内容によっては登録をお断りする場合があります。</span>
+        </label>
+      </div>
+
+      <button type="submit" id="submitBtn">送信する</button>
+      <div id="errorMsg"></div>
+    </form>
+  </div>
+
+  <div id="doneScreen">
+    <div class="icon">✅</div>
+    <p id="doneMessage">審査依頼を受け付けました。結果はこのLINEアカウントにお知らせします。</p>
+  </div>
+</div>
+
+<script>
+// GASのWeb App（doPost）エントポイント。飲食店会員登録LIFF専用のルーティングが実装済み。
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
+const LIFF_ID = '2011435226-zVCsIUV6';
+
+const statusEl = document.getElementById('status');
+const formScreen = document.getElementById('formScreen');
+const doneScreen = document.getElementById('doneScreen');
+const appForm = document.getElementById('appForm');
+const submitBtn = document.getElementById('submitBtn');
+const errorMsg = document.getElementById('errorMsg');
+
+function showError(text) {
+  errorMsg.textContent = text;
+  errorMsg.style.display = 'block';
+}
+
+function clearError() {
+  errorMsg.style.display = 'none';
+  errorMsg.textContent = '';
+}
+
+async function init() {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) {
+      liff.login();
+      return; // login() redirects; init() will re-run after redirect back
+    }
+    statusEl.hidden = true;
+    formScreen.hidden = false;
+  } catch (err) {
+    statusEl.textContent = '読み込みに失敗しました。時間をおいて再度お試しください。';
+    console.error('liff.init failed', err);
+  }
+}
+
+appForm.addEventListener('submit', async function (e) {
+  e.preventDefault();
+  clearError();
+
+  const email = document.getElementById('email').value.trim();
+  const shopUrl = document.getElementById('shopUrl').value.trim();
+  const monthlyVolumeEl = appForm.querySelector('input[name="monthlyVolume"]:checked');
+  const roles = Array.from(appForm.querySelectorAll('input[name="roles"]:checked')).map(function (el) { return el.value; });
+  const agree = document.getElementById('agree').checked;
+
+  if (!email || !shopUrl || !monthlyVolumeEl || roles.length === 0 || !agree) {
+    showError('未入力の項目があります。ご確認ください。');
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = '送信中...';
+
+  try {
+    const idToken = liff.getIDToken();
+    if (!idToken) {
+      throw new Error('LINEログイン情報を取得できませんでした。');
+    }
+
+    const res = await fetch(BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        idToken: idToken,
+        email: email,
+        roles: roles,
+        shopUrl: shopUrl,
+        monthlyVolume: monthlyVolumeEl.value,
+        agree: agree
+      })
+    });
+
+    const data = await res.json();
+
+    if (data && data.ok) {
+      formScreen.hidden = true;
+      doneScreen.style.display = 'block';
+    } else {
+      showError((data && data.error) || '送信に失敗しました。時間をおいて再度お試しください。');
+      submitBtn.disabled = false;
+      submitBtn.textContent = '送信する';
+    }
+  } catch (err) {
+    console.error('submit failed', err);
+    showError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
+    submitBtn.disabled = false;
+    submitBtn.textContent = '送信する';
+  }
+});
+
+init();
+</script>
+</body>
+</html>
