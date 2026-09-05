@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>KOFUNE 飲食店発注</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+:root {
+color-scheme: light;
+--bg: #faf8f5;
+--fg: #2a2420;
+--accent: #1f7a4d;
+--accent-dark: #175c3a;
+--border: #ddd5cb;
+--danger: #c0392b;
+--muted: #7a7168;
+}
+* { box-sizing: border-box; }
+body {
+margin: 0;
+font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+background: var(--bg);
+color: var(--fg);
+padding: 16px 16px 96px;
+}
+.wrap { max-width: 480px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 8px 0 4px; }
+.lead { font-size: 13px; color: var(--muted); margin: 0 0 16px; line-height: 1.6; }
+#status { text-align: center; padding: 60px 16px; color: var(--muted); font-size: 14px; }
+#errorMsg {
+color: var(--danger);
+font-size: 13px;
+margin-top: 12px;
+display: none;
+text-align: center;
+white-space: pre-wrap;
+}
+.badge {
+display: inline-block;
+font-size: 12px;
+font-weight: 600;
+padding: 3px 10px;
+border-radius: 999px;
+margin-bottom: 12px;
+}
+.badge.card { background: #e8f3ee; color: var(--accent-dark); }
+.badge.invoice { background: #eef1f6; color: #33445a; }
+.product-card {
+background: #fff;
+border: 1px solid var(--border);
+border-radius: 12px;
+padding: 12px;
+margin-bottom: 10px;
+display: flex;
+gap: 12px;
+align-items: center;
+}
+.product-card img {
+width: 64px; height: 64px; object-fit: cover; border-radius: 8px;
+background: #eee; flex-shrink: 0;
+}
+.product-info { flex: 1; min-width: 0; }
+.product-title { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.product-price { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.product-oos { font-size: 12px; color: var(--danger); margin-top: 2px; }
+.qty-control {
+display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+.qty-btn {
+width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border);
+background: #fff; font-size: 16px; line-height: 1; cursor: pointer;
+}
+.qty-btn:active { background: #f1ece5; }
+.qty-value { min-width: 20px; text-align: center; font-size: 14px; font-weight: 600; }
+#cartBar {
+position: fixed; left: 0; right: 0; bottom: 0;
+background: #fff; border-top: 1px solid var(--border);
+padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+display: none;
+}
+#cartBar .inner { max-width: 480px; margin: 0 auto; }
+#cartSummary { font-size: 13px; color: var(--muted); margin-bottom: 8px; display: flex; justify-content: space-between; }
+#cartSummary .total { font-weight: 700; color: var(--fg); font-size: 15px; }
+button#orderBtn {
+width: 100%; padding: 14px; font-size: 16px; font-weight: 600; color: #fff;
+background: var(--accent); border: none; border-radius: 10px; cursor: pointer;
+}
+button#orderBtn:disabled { background: #b9b2a8; }
+button#orderBtn:active:not(:disabled) { background: var(--accent-dark); }
+.note-field { margin-bottom: 14px; }
+.note-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.note-field textarea {
+width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid var(--border);
+border-radius: 8px; resize: vertical; min-height: 44px; font-family: inherit;
+}
+#doneScreen, #noAccessScreen {
+display: none; text-align: center; padding: 40px 16px;
+}
+#doneScreen .icon, #noAccessScreen .icon { font-size: 40px; margin-bottom: 12px; }
+#doneScreen p, #noAccessScreen p { font-size: 14px; line-height: 1.8; color: var(--fg); }
+#doneScreen a.pay-link {
+display: inline-block; margin-top: 12px; padding: 12px 24px;
+background: var(--accent); color: #fff; text-decoration: none; border-radius: 10px; font-weight: 600;
+}
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<div id="status">読み込み中...</div>
+
+<div id="noAccessScreen">
+<div class="icon">🔒</div>
+<p id="noAccessMessage">飲食店会員登録が確認できませんでした。</p>
+</div>
+
+<div id="orderScreen" hidden>
+<h1>飲食店発注</h1>
+<p class="lead">料飲店価格でご注文いただけます。カートに入れて「注文を確定する」を押してください。</p>
+<div id="paymentBadge"></div>
+<div id="itemsList"></div>
+<div class="note-field">
+<label for="noteInput">備考（任意）</label>
+<textarea id="noteInput" placeholder="配送日のご希望など"></textarea>
+</div>
+<div id="errorMsg"></div>
+</div>
+
+<div id="doneScreen">
+<div class="icon">✅</div>
+<p id="doneMessage"></p>
+</div>
+</div>
+
+<div id="cartBar">
+<div class="inner">
+<div id="cartSummary"><span id="cartCount">0点</span><span class="total" id="cartTotal">¥0</span></div>
+<button id="orderBtn" disabled>カートが空です</button>
+</div>
+</div>
+
+<script>
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
+const LIFF_ID = '2011435226-tRdh8f7W';
+
+const statusEl = document.getElementById('status');
+const noAccessScreen = document.getElementById('noAccessScreen');
+const noAccessMessage = document.getElementById('noAccessMessage');
+const orderScreen = document.getElementById('orderScreen');
+const paymentBadge = document.getElementById('paymentBadge');
+const itemsList = document.getElementById('itemsList');
+const noteInput = document.getElementById('noteInput');
+const errorMsg = document.getElementById('errorMsg');
+const doneScreen = document.getElementById('doneScreen');
+const doneMessage = document.getElementById('doneMessage');
+const cartBar = document.getElementById('cartBar');
+const cartCount = document.getElementById('cartCount');
+const cartTotal = document.getElementById('cartTotal');
+const orderBtn = document.getElementById('orderBtn');
+
+let idToken = null;
+let catalogItems = [];
+let cart = {};
+let submitting = false;
+
+function showError(text) {
+errorMsg.textContent = text;
+errorMsg.style.display = 'block';
+}
+function clearError() {
+errorMsg.style.display = 'none';
+errorMsg.textContent = '';
+}
+function yen(n) {
+return '¥' + Math.round(Number(n)).toLocaleString();
+}
+
+async function callBackend(action, extra) {
+const body = Object.assign({ action: action, idToken: idToken }, extra || {});
+const res = await fetch(BACKEND_URL, {
+method: 'POST',
+headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+body: JSON.stringify(body)
+});
+return res.json();
+}
+
+function renderCatalog(items, discountPercent) {
+itemsList.innerHTML = '';
+items.forEach(function (item) {
+const card = document.createElement('div');
+card.className = 'product-card';
+
+const img = document.createElement('img');
+img.src = item.imageUrl || '';
+img.alt = '';
+card.appendChild(img);
+
+const info = document.createElement('div');
+info.className = 'product-info';
+const title = document.createElement('div');
+title.className = 'product-title';
+title.textContent = item.title;
+info.appendChild(title);
+const price = document.createElement('div');
+price.className = 'product-price';
+price.textContent = yen(item.price) + (discountPercent ? '（料飲店価格）' : '');
+info.appendChild(price);
+if (item.inventoryQuantity !== null && item.inventoryQuantity !== undefined && item.inventoryQuantity <= 0) {
+const oos = document.createElement('div');
+oos.className = 'product-oos';
+oos.textContent = '在庫切れ';
+info.appendChild(oos);
+}
+card.appendChild(info);
+
+const qtyControl = document.createElement('div');
+qtyControl.className = 'qty-control';
+const minusBtn = document.createElement('button');
+minusBtn.type = 'button';
+minusBtn.className = 'qty-btn';
+minusBtn.textContent = '−';
+const qtyValue = document.createElement('span');
+qtyValue.className = 'qty-value';
+qtyValue.textContent = '0';
+const plusBtn = document.createElement('button');
+plusBtn.type = 'button';
+plusBtn.className = 'qty-btn';
+plusBtn.textContent = '＋';
+
+function updateQty(delta) {
+const current = cart[item.variantId] || 0;
+const next = Math.max(0, current + delta);
+if (next === 0) delete cart[item.variantId]; else cart[item.variantId] = next;
+qtyValue.textContent = String(next);
+updateCartBar();
+}
+minusBtn.addEventListener('click', function () { updateQty(-1); });
+plusBtn.addEventListener('click', function () { updateQty(1); });
+
+qtyControl.appendChild(minusBtn);
+qtyControl.appendChild(qtyValue);
+qtyControl.appendChild(plusBtn);
+card.appendChild(qtyControl);
+
+itemsList.appendChild(card);
+});
+}
+
+function updateCartBar() {
+const variantIds = Object.keys(cart);
+const count = variantIds.reduce(function (sum, id) { return sum + cart[id]; }, 0);
+let total = 0;
+variantIds.forEach(function (id) {
+const item = catalogItems.find(function (i) { return i.variantId === id; });
+if (item) total += Number(item.price) * cart[id];
+});
+cartCount.textContent = count + '点';
+cartTotal.textContent = yen(total);
+cartBar.style.display = count > 0 ? 'block' : 'none';
+orderBtn.disabled = count === 0 || submitting;
+orderBtn.textContent = count === 0 ? 'カートが空です' : '注文を確定する';
+}
+
+async function init() {
+try {
+await liff.init({ liffId: LIFF_ID });
+if (!liff.isLoggedIn()) {
+liff.login();
+return;
+}
+
+idToken = liff.getIDToken();
+if (!idToken) {
+statusEl.textContent = 'ログイン情報を取得できませんでした。時間をおいて再度お試しください。';
+return;
+}
+
+const data = await callBackend('get_ordering_catalog');
+if (!data || !data.ok) {
+statusEl.hidden = true;
+noAccessMessage.textContent = (data && data.error) || '飲食店会員登録が確認できませんでした。';
+noAccessScreen.style.display = 'block';
+return;
+}
+
+catalogItems = data.items || [];
+paymentBadge.innerHTML = data.customer && data.customer.invoiceOk
+? '<span class="badge invoice">お支払い: 請求書（月末締め）</span>'
+: '<span class="badge card">お支払い: カード決済</span>';
+renderCatalog(catalogItems, data.discountPercent);
+
+statusEl.hidden = true;
+orderScreen.hidden = false;
+updateCartBar();
+} catch (err) {
+console.error('init failed', err);
+statusEl.textContent = '読み込みに失敗しました。時間をおいて再度お試しください。';
+}
+}
+
+orderBtn.addEventListener('click', async function () {
+if (submitting) return;
+clearError();
+const items = Object.keys(cart).map(function (variantId) {
+return { variantId: variantId, quantity: cart[variantId] };
+});
+if (!items.length) return;
+
+submitting = true;
+orderBtn.disabled = true;
+orderBtn.textContent = '送信中...';
+
+try {
+const data = await callBackend('create_restaurant_order', { items: items, note: noteInput.value.trim() });
+if (data && data.ok) {
+orderScreen.hidden = true;
+cartBar.style.display = 'none';
+if (data.isInvoice) {
+doneMessage.textContent = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '\n\nお支払いは月末締めのご請求となります。請求書は追ってLINEでお送りします。';
+} else {
+doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '\n\n下記よりお支払い（カード決済）をお願いいたします。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">お支払いに進む</a>';
+}
+doneScreen.style.display = 'block';
+} else {
+showError((data && data.error) || '注文の送信に失敗しました。時間をおいて再度お試しください。');
+submitting = false;
+updateCartBar();
+}
+} catch (err) {
+console.error('order submit failed', err);
+showError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
+submitting = false;
+updateCartBar();
+}
+});
+
+init();
+</script>
+</body>
+</html>
