@@ -110,6 +110,14 @@
   }
   #doneScreen .icon { font-size: 40px; margin-bottom: 12px; }
   #doneScreen p { font-size: 14px; line-height: 1.7; color: var(--fg); }
+  #alreadyScreen, #pendingScreen {
+    display: none;
+    text-align: center;
+    padding: 40px 16px;
+  }
+  #alreadyScreen .icon, #pendingScreen .icon { font-size: 40px; margin-bottom: 12px; }
+  #alreadyScreen p, #pendingScreen p { font-size: 14px; line-height: 1.7; color: var(--fg); }
+  #alreadyScreen a { color: var(--accent); }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -170,6 +178,16 @@
     <div class="icon">✅</div>
     <p id="doneMessage">審査依頼を受け付けました。結果はこのLINEアカウントにお知らせします。</p>
   </div>
+
+  <div id="alreadyScreen">
+    <div class="icon">✅</div>
+    <p>既に飲食店会員として登録済みです。卸価格でのご注文は<a href="https://saketen.62the.one/">オンラインストア</a>からどうぞ。</p>
+  </div>
+
+  <div id="pendingScreen">
+    <div class="icon">⏳</div>
+    <p>現在、飲食店会員登録の審査中です。結果はこちらのLINEアカウントにお知らせします。</p>
+  </div>
 </div>
 
 <script>
@@ -180,6 +198,8 @@ const LIFF_ID = '2011435226-zVCsIUV6';
 const statusEl = document.getElementById('status');
 const formScreen = document.getElementById('formScreen');
 const doneScreen = document.getElementById('doneScreen');
+const alreadyScreen = document.getElementById('alreadyScreen');
+const pendingScreen = document.getElementById('pendingScreen');
 const appForm = document.getElementById('appForm');
 const submitBtn = document.getElementById('submitBtn');
 const errorMsg = document.getElementById('errorMsg');
@@ -201,8 +221,37 @@ async function init() {
       liff.login();
       return; // login() redirects; init() will re-run after redirect back
     }
-    statusEl.hidden = true;
-    formScreen.hidden = false;
+
+    const idToken = liff.getIDToken();
+    if (!idToken) {
+      statusEl.hidden = true;
+      formScreen.hidden = false;
+      return;
+    }
+
+    try {
+      const res = await fetch(BACKEND_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'checkStatus', idToken: idToken })
+      });
+      const data = await res.json();
+      const memberStatus = (data && data.ok) ? data.status : 'none';
+
+      statusEl.hidden = true;
+      if (memberStatus === 'approved') {
+        alreadyScreen.style.display = 'block';
+      } else if (memberStatus === 'pending') {
+        pendingScreen.style.display = 'block';
+      } else {
+        formScreen.hidden = false;
+      }
+    } catch (checkErr) {
+      // ステータス確認に失敗した場合は通常の登録フォームを表示する（フェイルオープン）
+      console.error('checkStatus failed', checkErr);
+      statusEl.hidden = true;
+      formScreen.hidden = false;
+    }
   } catch (err) {
     statusEl.textContent = '読み込みに失敗しました。時間をおいて再度お試しください。';
     console.error('liff.init failed', err);
