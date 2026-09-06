@@ -123,6 +123,20 @@ display: none; text-align: center; padding: 40px 16px;
 display: inline-block; margin-top: 12px; padding: 12px 24px;
 background: var(--accent); color: #fff; text-decoration: none; border-radius: 10px; font-weight: 600;
 }
+#cancelArea { margin-top: 24px; }
+.cancel-link {
+background: none; border: none; color: var(--muted); font-size: 13px;
+text-decoration: underline; cursor: pointer; padding: 8px;
+}
+.cancel-confirm-text { font-size: 13px; color: var(--fg); margin-bottom: 10px; }
+.cancel-btn-row { display: flex; gap: 8px; justify-content: center; }
+.cancel-yes, .cancel-no {
+padding: 10px 16px; font-size: 13px; border-radius: 8px; cursor: pointer; font-weight: 600;
+}
+.cancel-yes { background: var(--danger); color: #fff; border: none; }
+.cancel-yes:disabled { background: #d8b3ac; }
+.cancel-no { background: #fff; color: var(--fg); border: 1px solid var(--border); }
+.cancel-error { font-size: 13px; color: var(--danger); margin-bottom: 8px; white-space: pre-wrap; }
 #detailOverlay {
 display: none;
 position: fixed; inset: 0; background: rgba(20, 16, 12, 0.55);
@@ -171,8 +185,11 @@ width: 100%; max-height: 260px; object-fit: cover; border-radius: 10px; backgrou
 </div>
 
 <div id="doneScreen">
-<div class="icon">✅</div>
+<div class="icon" id="doneIcon">✅</div>
 <p id="doneMessage"></p>
+<div id="cancelArea">
+<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>
+</div>
 </div>
 </div>
 
@@ -208,6 +225,10 @@ const noteInput = document.getElementById('noteInput');
 const errorMsg = document.getElementById('errorMsg');
 const doneScreen = document.getElementById('doneScreen');
 const doneMessage = document.getElementById('doneMessage');
+const doneIcon = document.getElementById('doneIcon');
+const cancelArea = document.getElementById('cancelArea');
+let lastDraftOrderId = null;
+let cancelling = false;
 const cartBar = document.getElementById('cartBar');
 const cartCount = document.getElementById('cartCount');
 const cartTotal = document.getElementById('cartTotal');
@@ -252,6 +273,57 @@ body: JSON.stringify(body)
 });
 return res.json();
 }
+
+function renderCancelDefault() {
+cancelArea.innerHTML = '<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>';
+}
+function renderCancelConfirm() {
+cancelArea.innerHTML =
+'<p class="cancel-confirm-text">本当にこの注文をキャンセルしますか？</p>' +
+'<div class="cancel-btn-row">' +
+'<button type="button" data-action="cancel-yes" class="cancel-yes">はい、キャンセルする</button>' +
+'<button type="button" data-action="cancel-no" class="cancel-no">戻る</button>' +
+'</div>';
+}
+function renderCancelError(msg) {
+cancelArea.innerHTML =
+'<p class="cancel-error"></p>' +
+'<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>';
+cancelArea.querySelector('.cancel-error').textContent = msg;
+}
+function renderCancelled() {
+cancelArea.innerHTML = '';
+doneIcon.textContent = '🚫';
+doneMessage.textContent = 'ご注文をキャンセルしました。';
+}
+
+cancelArea.addEventListener('click', async function (e) {
+const action = e.target.getAttribute('data-action');
+if (!action) return;
+if (action === 'cancel-start') {
+renderCancelConfirm();
+} else if (action === 'cancel-no') {
+renderCancelDefault();
+} else if (action === 'cancel-yes') {
+if (cancelling) return;
+cancelling = true;
+e.target.disabled = true;
+e.target.textContent = 'キャンセル処理中...';
+try {
+const data = await callBackend('cancel_restaurant_order', { draftOrderId: lastDraftOrderId });
+if (data && data.ok) {
+renderCancelled();
+} else {
+renderCancelError((data && data.error) || '注文のキャンセルに失敗しました。時間をおいて再度お試しください。');
+}
+} catch (err) {
+console.error('cancel failed', err);
+renderCancelError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
+} finally {
+cancelling = false;
+}
+}
+});
 
 function openDetail(item) {
 detailImage.src = (item.images && item.images.length ? item.images[0] : item.imageUrl) || '';
@@ -433,6 +505,13 @@ const data = await callBackend('create_restaurant_order', { items: items, note: 
 if (data && data.ok) {
 orderScreen.hidden = true;
 cartBar.style.display = 'none';
+lastDraftOrderId = data.draftOrderId || null;
+doneIcon.textContent = '✅';
+if (lastDraftOrderId) {
+renderCancelDefault();
+} else {
+cancelArea.innerHTML = '';
+}
 if (data.isInvoice) {
 doneMessage.textContent = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '\n\nお支払いは月末締めのご請求となります。請求書は追ってLINEでお送りします。';
 } else {
