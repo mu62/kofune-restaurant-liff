@@ -1,714 +1,1010 @@
 <!DOCTYPE html>
 <html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>KOFUNE 飲食店発注</title>
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<style>
-:root {
-color-scheme: light;
---bg: #faf8f5;
---fg: #2a2420;
---accent: #1f7a4d;
---accent-dark: #175c3a;
---border: #ddd5cb;
---danger: #c0392b;
---muted: #7a7168;
-}
-* { box-sizing: border-box; }
-body {
-margin: 0;
-font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
-background: var(--bg);
-color: var(--fg);
-padding: 16px 16px 96px;
-}
-.wrap { max-width: 480px; margin: 0 auto; }
-h1 { font-size: 20px; margin: 8px 0 4px; }
-.lead { font-size: 13px; color: var(--muted); margin: 0 0 16px; line-height: 1.6; }
-#status { text-align: center; padding: 60px 16px; color: var(--muted); font-size: 14px; }
-#errorMsg {
-color: var(--danger);
-font-size: 13px;
-margin-top: 12px;
-display: none;
-text-align: center;
-white-space: pre-wrap;
-}
-.badge {
-display: inline-block;
-font-size: 12px;
-font-weight: 600;
-padding: 3px 10px;
-border-radius: 999px;
-margin-bottom: 12px;
-}
-.badge.card { background: #e8f3ee; color: var(--accent-dark); }
-.badge.invoice { background: #eef1f6; color: #33445a; }
-#paymentNote {
-display: block; font-size: 12px; line-height: 1.6; color: var(--accent-dark);
-background: #e8f3ee; border-radius: 8px; padding: 8px 10px; margin: -4px 0 14px;
-}
-.product-card {
-background: #fff;
-border: 1px solid var(--border);
-border-radius: 12px;
-padding: 12px;
-margin-bottom: 10px;
-display: flex;
-gap: 12px;
-align-items: center;
-transition: opacity .15s;
-}
-.product-card.sold-out { opacity: .6; }
-.product-tap {
-display: flex;
-gap: 12px;
-align-items: center;
-flex: 1;
-min-width: 0;
-cursor: pointer;
-background: none;
-border: none;
-padding: 0;
-text-align: left;
-font: inherit;
-color: inherit;
-}
-.product-card img {
-width: 64px; height: 64px; object-fit: cover; border-radius: 8px;
-background: #eee; flex-shrink: 0;
-}
-.product-info { flex: 1; min-width: 0; }
-.product-title { font-size: 14px; font-weight: 600; line-height: 1.4; }
-.product-detail-link { font-size: 11px; color: var(--accent-dark); margin-top: 2px; text-decoration: underline; }
-.product-price { font-size: 13px; color: var(--muted); margin-top: 4px; }
-.price-original { text-decoration: line-through; color: var(--muted); margin-right: 6px; }
-.price-discounted { color: var(--accent-dark); font-weight: 700; }
-.product-oos { font-size: 12px; color: var(--danger); margin-top: 2px; font-weight: 600; }
-.qty-control {
-display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-}
-.qty-btn {
-width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border);
-background: #fff; font-size: 16px; line-height: 1; cursor: pointer;
-}
-.qty-btn:active { background: #f1ece5; }
-.qty-btn:disabled { opacity: .35; cursor: not-allowed; background: #fff; }
-.qty-value { min-width: 20px; text-align: center; font-size: 14px; font-weight: 600; }
-#cartBar {
-position: fixed; left: 0; right: 0; bottom: 0;
-background: #fff; border-top: 1px solid var(--border);
-padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-display: none;
-}
-#cartBar .inner { max-width: 480px; margin: 0 auto; }
-#cartSummary { font-size: 13px; color: var(--muted); margin-bottom: 8px; display: flex; justify-content: space-between; }
-#cartSummary .total { font-weight: 700; color: var(--fg); font-size: 15px; }
-button#orderBtn {
-width: 100%; padding: 14px; font-size: 16px; font-weight: 600; color: #fff;
-background: var(--accent); border: none; border-radius: 10px; cursor: pointer;
-}
-button#orderBtn:disabled { background: #b9b2a8; }
-button#orderBtn:active:not(:disabled) { background: var(--accent-dark); }
-.note-field { margin-bottom: 14px; }
-.note-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.note-field textarea {
-width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid var(--border);
-border-radius: 8px; resize: vertical; min-height: 44px; font-family: inherit;
-}
-#doneScreen, #noAccessScreen {
-display: none; text-align: center; padding: 40px 16px;
-}
-#doneScreen .icon, #noAccessScreen .icon { font-size: 40px; margin-bottom: 12px; }
-#doneScreen p, #noAccessScreen p { font-size: 14px; line-height: 1.8; color: var(--fg); }
-#doneScreen a.pay-link {
-display: inline-block; margin-top: 12px; padding: 12px 24px;
-background: var(--accent); color: #fff; text-decoration: none; border-radius: 10px; font-weight: 600;
-}
-#cancelArea { margin-top: 24px; }
-.cancel-link {
-background: none; border: none; color: var(--muted); font-size: 13px;
-text-decoration: underline; cursor: pointer; padding: 8px;
-}
-.cancel-confirm-text { font-size: 13px; color: var(--fg); margin-bottom: 10px; }
-.cancel-btn-row { display: flex; gap: 8px; justify-content: center; }
-.cancel-yes, .cancel-no {
-padding: 10px 16px; font-size: 13px; border-radius: 8px; cursor: pointer; font-weight: 600;
-}
-.cancel-yes { background: var(--danger); color: #fff; border: none; }
-.cancel-yes:disabled { background: #d8b3ac; }
-.cancel-no { background: #fff; color: var(--fg); border: 1px solid var(--border); }
-.cancel-error { font-size: 13px; color: var(--danger); margin-bottom: 8px; white-space: pre-wrap; }
-#detailOverlay {
-display: none;
-position: fixed; inset: 0; background: rgba(20, 16, 12, 0.55);
-z-index: 50;
-padding: 20px 16px;
-overflow-y: auto;
-}
-#detailOverlay.open { display: block; }
-#detailSheet {
-background: #fff; border-radius: 14px; max-width: 460px; margin: 20px auto;
-padding: 16px; position: relative;
-}
-#detailClose {
-position: absolute; top: 10px; right: 10px; width: 32px; height: 32px;
-border-radius: 50%; border: none; background: #f1ece5; font-size: 16px; cursor: pointer;
-}
-#detailImage {
-width: 100%; max-height: 260px; object-fit: cover; border-radius: 10px; background: #eee; margin-bottom: 12px;
-}
-#detailTitle { font-size: 16px; font-weight: 700; margin-bottom: 6px; padding-right: 30px; }
-#detailPrice { font-size: 14px; margin-bottom: 10px; }
-#detailDescription { font-size: 13px; line-height: 1.8; white-space: pre-wrap; color: var(--fg); }
-#detailOos { font-size: 13px; color: var(--danger); font-weight: 600; margin-bottom: 8px; }
-[hidden] { display: none !important; }
-.history-link-btn { display:block; width:100%; margin-top:14px; padding:10px; background:#fff; border:1px solid var(--border); border-radius:10px; color:var(--fg); font-size:14px; cursor:pointer; }
-.history-back-btn { display:inline-block; margin-bottom:14px; padding:8px 12px; background:#fff; border:1px solid var(--border); border-radius:8px; color:var(--fg); font-size:14px; cursor:pointer; }
-.history-item { background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:10px; }
-.history-item-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
-.history-item-name { font-weight:bold; }
-.history-item-date { font-size:12px; color:var(--muted); margin-bottom:6px; }
-.history-item-total { font-size:14px; margin-bottom:8px; }
-.history-empty { text-align:center; color:var(--muted); padding:24px 0; }
-.history-item-cancelled { color:var(--muted); font-size:13px; }
-</style>
-</head>
-<body>
-<div class="wrap">
-<div id="status">読み込み中...</div>
-
-<div id="noAccessScreen">
-<div class="icon">🔒</div>
-<p id="noAccessMessage">飲食店会員登録が確認できませんでした。</p>
-</div>
-
-<div id="orderScreen" hidden>
-<h1>飲食店発注</h1>
-<p class="lead">料飲店価格でご注文いただけます。商品名をタップすると詳細をご確認いただけます。カートに入れて「注文を確定する」を押してください。</p>
-<button type="button" id="historyOpenBtn" class="history-link-btn">注文履歴・キャンセルはこちら</button>
-<div id="paymentBadge"></div>
-<div id="paymentNote" hidden></div>
-<div id="itemsList"></div>
-<div class="note-field">
-<label for="noteInput">備考（任意）</label>
-<textarea id="noteInput" placeholder="配送日のご希望など"></textarea>
-</div>
-<div id="errorMsg"></div>
-</div>
-<div id="historyScreen" hidden>
-<button type="button" id="historyBackBtn" class="history-back-btn">← 注文画面に戻る</button>
-<h1>注文履歴</h1>
-<div id="historyList"></div>
-</div>
-
-<div id="doneScreen">
-<div class="icon" id="doneIcon">✅</div>
-<p id="doneMessage"></p>
-<div id="cancelArea">
-<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>
-</div>
-</div>
-</div>
-
-<div id="cartBar">
-<div class="inner">
-<div id="cartSummary"><span id="cartCount">0点</span><span class="total" id="cartTotal">¥0</span></div>
-<button id="orderBtn" disabled>カートが空です</button>
-</div>
-</div>
-
-<div id="detailOverlay">
-<div id="detailSheet">
-<button id="detailClose" type="button" aria-label="閉じる">✕</button>
-<img id="detailImage" src="" alt="">
-<div id="detailTitle"></div>
-<div id="detailOos" hidden>在庫切れ・現在ご注文いただけません</div>
-<div id="detailPrice"></div>
-<div id="detailDescription"></div>
-</div>
-</div>
-
-<script>
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
-const LIFF_ID = '2011435226-tRdh8f7W';
-
-const statusEl = document.getElementById('status');
-const noAccessScreen = document.getElementById('noAccessScreen');
-const noAccessMessage = document.getElementById('noAccessMessage');
-const orderScreen = document.getElementById('orderScreen');
-const paymentBadge = document.getElementById('paymentBadge');
-const paymentNote = document.getElementById('paymentNote');
-const itemsList = document.getElementById('itemsList');
-const noteInput = document.getElementById('noteInput');
-const errorMsg = document.getElementById('errorMsg');
-const doneScreen = document.getElementById('doneScreen');
-const doneMessage = document.getElementById('doneMessage');
-const doneIcon = document.getElementById('doneIcon');
-const cancelArea = document.getElementById('cancelArea');
-let lastDraftOrderId = null;
-let cancelling = false;
-const cartBar = document.getElementById('cartBar');
-const cartCount = document.getElementById('cartCount');
-const cartTotal = document.getElementById('cartTotal');
-const orderBtn = document.getElementById('orderBtn');
-const detailOverlay = document.getElementById('detailOverlay');
-const detailClose = document.getElementById('detailClose');
-const detailImage = document.getElementById('detailImage');
-const detailTitle = document.getElementById('detailTitle');
-const detailPrice = document.getElementById('detailPrice');
-const detailDescription = document.getElementById('detailDescription');
-const detailOos = document.getElementById('detailOos');
-
-let idToken = null;
-let catalogItems = [];
-let cart = {};
-let submitting = false;
-
-function showError(text) {
-errorMsg.textContent = text;
-errorMsg.style.display = 'block';
-}
-function clearError() {
-errorMsg.style.display = 'none';
-errorMsg.textContent = '';
-}
-function yen(n) {
-return '¥' + Math.round(Number(n)).toLocaleString();
-}
-function isOutOfStock(item) {
-return item.inventoryQuantity !== null && item.inventoryQuantity !== undefined && item.inventoryQuantity <= 0;
-}
-function unitPrice(item) {
-return (item.discountedPrice !== null && item.discountedPrice !== undefined) ? Number(item.discountedPrice) : Number(item.price);
-}
-
-async function callBackend(action, extra) {
-const body = Object.assign({ action: action, idToken: idToken }, extra || {});
-const res = await fetch(BACKEND_URL, {
-method: 'POST',
-headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-body: JSON.stringify(body)
-});
-return res.json();
-}
-
-function renderCancelDefault() {
-cancelArea.innerHTML = '<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>';
-}
-function renderCancelConfirm() {
-cancelArea.innerHTML =
-'<p class="cancel-confirm-text">本当にこの注文をキャンセルしますか？</p>' +
-'<div class="cancel-btn-row">' +
-'<button type="button" data-action="cancel-yes" class="cancel-yes">はい、キャンセルする</button>' +
-'<button type="button" data-action="cancel-no" class="cancel-no">戻る</button>' +
-'</div>';
-}
-function renderCancelError(msg) {
-cancelArea.innerHTML =
-'<p class="cancel-error"></p>' +
-'<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>';
-cancelArea.querySelector('.cancel-error').textContent = msg;
-}
-function renderCancelled() {
-cancelArea.innerHTML = '';
-doneIcon.textContent = '🚫';
-doneMessage.textContent = 'ご注文をキャンセルしました。';
-}
-
-cancelArea.addEventListener('click', async function (e) {
-const action = e.target.getAttribute('data-action');
-if (!action) return;
-if (action === 'cancel-start') {
-renderCancelConfirm();
-} else if (action === 'cancel-no') {
-renderCancelDefault();
-} else if (action === 'cancel-yes') {
-if (cancelling) return;
-cancelling = true;
-e.target.disabled = true;
-e.target.textContent = 'キャンセル処理中...';
-try {
-const data = await callBackend('cancel_restaurant_order', { draftOrderId: lastDraftOrderId });
-if (data && data.ok) {
-renderCancelled();
-} else {
-renderCancelError((data && data.error) || '注文のキャンセルに失敗しました。時間をおいて再度お試しください。');
-}
-} catch (err) {
-console.error('cancel failed', err);
-renderCancelError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
-} finally {
-cancelling = false;
-}
-}
-});
-
-function openDetail(item) {
-detailImage.src = (item.images && item.images.length ? item.images[0] : item.imageUrl) || '';
-detailTitle.textContent = item.title;
-const hasDiscount = item.discountedPrice !== null && item.discountedPrice !== undefined && Number(item.discountedPrice) !== Number(item.price);
-detailPrice.innerHTML = hasDiscount
-? '<span class="price-original">' + yen(item.price) + '</span><span class="price-discounted">' + yen(item.discountedPrice) + '（料飲店価格）</span>'
-: yen(item.price);
-detailDescription.textContent = item.description || '';
-detailOos.hidden = !isOutOfStock(item);
-detailOverlay.classList.add('open');
-}
-function closeDetail() {
-detailOverlay.classList.remove('open');
-}
-detailClose.addEventListener('click', closeDetail);
-detailOverlay.addEventListener('click', function (e) {
-if (e.target === detailOverlay) closeDetail();
-});
-
-function renderCatalog(items) {
-itemsList.innerHTML = '';
-items.forEach(function (item) {
-const outOfStock = isOutOfStock(item);
-const hasDiscount = item.discountedPrice !== null && item.discountedPrice !== undefined && Number(item.discountedPrice) !== Number(item.price);
-
-const card = document.createElement('div');
-card.className = 'product-card' + (outOfStock ? ' sold-out' : '');
-
-const tapArea = document.createElement('button');
-tapArea.type = 'button';
-tapArea.className = 'product-tap';
-tapArea.addEventListener('click', function () { openDetail(item); });
-
-const img = document.createElement('img');
-img.src = (item.images && item.images.length ? item.images[0] : item.imageUrl) || '';
-img.alt = '';
-tapArea.appendChild(img);
-
-const info = document.createElement('div');
-info.className = 'product-info';
-const title = document.createElement('div');
-title.className = 'product-title';
-title.textContent = item.title;
-info.appendChild(title);
-
-const detailLink = document.createElement('div');
-detailLink.className = 'product-detail-link';
-detailLink.textContent = '商品詳細を見る';
-info.appendChild(detailLink);
-
-const price = document.createElement('div');
-price.className = 'product-price';
-if (hasDiscount) {
-const orig = document.createElement('span');
-orig.className = 'price-original';
-orig.textContent = yen(item.price);
-const disc = document.createElement('span');
-disc.className = 'price-discounted';
-disc.textContent = yen(item.discountedPrice) + '（料飲店価格）';
-price.appendChild(orig);
-price.appendChild(disc);
-} else {
-price.textContent = yen(item.price);
-}
-info.appendChild(price);
-
-if (outOfStock) {
-const oos = document.createElement('div');
-oos.className = 'product-oos';
-oos.textContent = '在庫切れ';
-info.appendChild(oos);
-}
-tapArea.appendChild(info);
-card.appendChild(tapArea);
-
-const qtyControl = document.createElement('div');
-qtyControl.className = 'qty-control';
-const minusBtn = document.createElement('button');
-minusBtn.type = 'button';
-minusBtn.className = 'qty-btn';
-minusBtn.textContent = '−';
-minusBtn.disabled = outOfStock;
-const qtyValue = document.createElement('span');
-qtyValue.className = 'qty-value';
-qtyValue.textContent = '0';
-const plusBtn = document.createElement('button');
-plusBtn.type = 'button';
-plusBtn.className = 'qty-btn';
-plusBtn.textContent = '＋';
-plusBtn.disabled = outOfStock;
-
-function updateQty(delta) {
-if (outOfStock) return;
-const current = cart[item.variantId] || 0;
-const next = Math.max(0, current + delta);
-if (next === 0) delete cart[item.variantId]; else cart[item.variantId] = next;
-qtyValue.textContent = String(next);
-updateCartBar();
-}
-minusBtn.addEventListener('click', function () { updateQty(-1); });
-plusBtn.addEventListener('click', function () { updateQty(1); });
-
-qtyControl.appendChild(minusBtn);
-qtyControl.appendChild(qtyValue);
-qtyControl.appendChild(plusBtn);
-card.appendChild(qtyControl);
-
-itemsList.appendChild(card);
-});
-}
-
-function updateCartBar() {
-const variantIds = Object.keys(cart);
-const count = variantIds.reduce(function (sum, id) { return sum + cart[id]; }, 0);
-let total = 0;
-variantIds.forEach(function (id) {
-const item = catalogItems.find(function (i) { return i.variantId === id; });
-if (item) total += unitPrice(item) * cart[id];
-});
-cartCount.textContent = count + '点';
-cartTotal.textContent = yen(total);
-cartBar.style.display = count > 0 ? 'block' : 'none';
-orderBtn.disabled = count === 0 || submitting;
-orderBtn.textContent = count === 0 ? 'カートが空です' : '注文を確定する';
-}
-
-async function init() {
-try {
-await liff.init({ liffId: LIFF_ID });
-if (!liff.isLoggedIn()) {
-liff.login();
-return;
-}
-
-idToken = liff.getIDToken();
-if (!idToken) {
-statusEl.textContent = 'ログイン情報を取得できませんでした。時間をおいて再度お試しください。';
-return;
-}
-
-const data = await callBackend('get_ordering_catalog');
-if (!data || !data.ok) {
-statusEl.hidden = true;
-noAccessMessage.textContent = (data && data.error) || '飲食店会員登録が確認できませんでした。';
-noAccessScreen.style.display = 'block';
-return;
-}
-
-catalogItems = data.items || [];
-if (data.customer && data.customer.invoiceOk) {
-paymentBadge.innerHTML = '<span class="badge invoice">お支払い: 請求書（月末締め）</span>';
-paymentNote.hidden = false;
-paymentNote.textContent = '💳 クレジットカード払いなら振込手数料がかかりません。切り替えをご希望の場合は、注文完了画面でご案内するリンクからお選びいただけます。';
-} else {
-paymentBadge.innerHTML = '<span class="badge card">お支払い: カード決済</span>';
-paymentNote.hidden = true;
-}
-renderCatalog(catalogItems);
-
-statusEl.hidden = true;
-orderScreen.hidden = false;
-updateCartBar();
-} catch (err) {
-console.error('init failed', err);
-statusEl.textContent = '読み込みに失敗しました。時間をおいて再度お試しください。';
-}
-}
-
-orderBtn.addEventListener('click', async function () {
-if (submitting) return;
-clearError();
-const items = Object.keys(cart).map(function (variantId) {
-return { variantId: variantId, quantity: cart[variantId] };
-});
-if (!items.length) return;
-
-submitting = true;
-orderBtn.disabled = true;
-orderBtn.textContent = '送信中...';
-
-try {
-const data = await callBackend('create_restaurant_order', { items: items, note: noteInput.value.trim() });
-if (data && data.ok) {
-orderScreen.hidden = true;
-cartBar.style.display = 'none';
-lastDraftOrderId = data.draftOrderId || null;
-doneIcon.textContent = '✅';
-if (lastDraftOrderId) {
-renderCancelDefault();
-} else {
-cancelArea.innerHTML = '';
-}
-if (data.isInvoice) {
-doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '<br><br>お支払いは月末締めのご請求となります。請求書は追ってLINEでお送りします。' +
-(data.invoiceUrl ? '<br><br>💳 クレジットカード払いなら振込手数料がかかりません。今すぐお支払いを済ませたい場合はこちらからどうぞ。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">カードでお支払いに進む</a>' : '');
-} else {
-doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '<br><br>下記よりお支払い（カード決済）をお願いいたします。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">お支払いに進む</a>';
-}
-doneScreen.style.display = 'block';
-} else {
-showError((data && data.error) || '注文の送信に失敗しました。時間をおいて再度お試しください。');
-submitting = false;
-updateCartBar();
-}
-} catch (err) {
-console.error('order submit failed', err);
-showError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
-submitting = false;
-updateCartBar();
-}
-});
-
-var historyOpenBtnEl = document.getElementById('historyOpenBtn');
-var historyBackBtnEl = document.getElementById('historyBackBtn');
-var historyScreenEl = document.getElementById('historyScreen');
-var historyListEl = document.getElementById('historyList');
-var historyBusy = false;
-
-function formatOrderDate(iso) {
-  if (!iso) return '';
-  var d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
-  return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' +
-    ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
-}
-
-function openHistory() {
-  var orderScreenEl = document.getElementById('orderScreen');
-  if (orderScreenEl) orderScreenEl.hidden = true;
-  if (historyScreenEl) historyScreenEl.hidden = false;
-  loadOrderHistory();
-}
-
-function closeHistory() {
-  if (historyScreenEl) historyScreenEl.hidden = true;
-  var orderScreenEl = document.getElementById('orderScreen');
-  if (orderScreenEl) orderScreenEl.hidden = false;
-}
-
-if (historyOpenBtnEl) historyOpenBtnEl.addEventListener('click', openHistory);
-if (historyBackBtnEl) historyBackBtnEl.addEventListener('click', closeHistory);
-
-async function loadOrderHistory() {
-  if (!historyListEl) return;
-  historyListEl.innerHTML = '<div class="history-empty">読み込み中...</div>';
-  try {
-    var data = await callBackend('get_my_orders');
-    if (!data.ok) {
-      historyListEl.innerHTML = '<div class="history-empty">注文履歴の取得に失敗しました。</div>';
-      return;
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>KOFUNE 飲食店発注</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #faf8f5;
+      --fg: #2a2420;
+      --accent: #1f7a4d;
+      --accent-dark: #175c3a;
+      --border: #ddd5cb;
+      --danger: #c0392b;
+      --muted: #7a7168;
     }
-    renderHistoryList(data.orders || []);
-  } catch (e) {
-    historyListEl.innerHTML = '<div class="history-empty">注文履歴の取得に失敗しました。</div>';
-  }
-}
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      padding: 16px 16px 96px;
+    }
+    .wrap { max-width: 480px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 8px 0 4px; }
+    .lead { font-size: 13px; color: var(--muted); margin: 0 0 16px; line-height: 1.6; }
+    #status { text-align: center; padding: 60px 16px; color: var(--muted); font-size: 14px; }
+    #errorMsg {
+      color: var(--danger);
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+      text-align: center;
+      white-space: pre-wrap;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 999px;
+      margin-bottom: 12px;
+    }
+    .badge.card { background: #e8f3ee; color: var(--accent-dark); }
+    .badge.invoice { background: #eef1f6; color: #33445a; }
+    #paymentNote {
+      position: relative; font-size: 13px; line-height: 1.7; color: #7a3a00;
+      background: #fff4e0; border: 1.5px solid #f0a839; border-radius: 12px;
+      padding: 14px 14px 12px; margin: 4px 0 18px;
+    }
+    .reco-bubble {
+      display: inline-block; background: #ff6b35; color: #fff;
+      font-size: 12px; font-weight: 800; padding: 4px 12px; border-radius: 999px;
+      margin-bottom: 8px; position: relative; box-shadow: 0 2px 4px rgba(255,107,53,0.35);
+    }
+    .reco-bubble::after {
+      content: ''; position: absolute; bottom: -6px; left: 16px;
+      border-width: 6px 6px 0 0; border-style: solid; border-color: #ff6b35 transparent transparent transparent;
+    }
+    .age-warning {
+      font-size: 12px; font-weight: 700; color: #b23c17; background: #fdecea;
+      border: 1px solid #f3b3a4; border-radius: 8px; padding: 8px 10px; margin: 0 0 14px;
+      line-height: 1.6;
+    }
+    .age-warning.small { margin: 8px 0 12px; font-size: 11.5px; }
+    .product-card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 10px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      transition: opacity .15s;
+    }
+    .product-card.sold-out { opacity: .6; }
+    .product-tap {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex: 1;
+      min-width: 0;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+      text-align: left;
+      font: inherit;
+      color: inherit;
+    }
+    .product-card img {
+      width: 64px; height: 64px; object-fit: cover; border-radius: 8px;
+      background: #eee; flex-shrink: 0;
+    }
+    .product-info { flex: 1; min-width: 0; }
+    .product-title { font-size: 14px; font-weight: 600; line-height: 1.4; }
+    .product-detail-link { font-size: 11px; color: var(--accent-dark); margin-top: 2px; text-decoration: underline; }
+    .product-price { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .price-original { text-decoration: line-through; color: var(--muted); margin-right: 6px; }
+    .price-discounted { color: var(--accent-dark); font-weight: 700; }
+    .product-oos { font-size: 12px; color: var(--danger); margin-top: 2px; font-weight: 600; }
+    .qty-control {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    }
+    .qty-btn {
+      width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border);
+      background: #fff; font-size: 16px; line-height: 1; cursor: pointer;
+    }
+    .qty-btn:active { background: #f1ece5; }
+    .qty-btn:disabled { opacity: .35; cursor: not-allowed; background: #fff; }
+    .qty-value { min-width: 20px; text-align: center; font-size: 14px; font-weight: 600; }
+    #cartBar {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      background: #fff; border-top: 1px solid var(--border);
+      padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+      display: none;
+    }
+    #cartBar .inner { max-width: 480px; margin: 0 auto; }
+    #cartSummary { font-size: 13px; color: var(--muted); margin-bottom: 2px; display: flex; justify-content: space-between; }
+    #cartSummary .total { font-weight: 700; color: var(--fg); font-size: 15px; }
+    #cartShippingLine { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; display: flex; justify-content: space-between; }
+    button#orderBtn {
+      width: 100%; padding: 14px; font-size: 16px; font-weight: 600; color: #fff;
+      background: var(--accent); border: none; border-radius: 10px; cursor: pointer;
+    }
+    button#orderBtn:disabled { background: #b9b2a8; }
+    button#orderBtn:active:not(:disabled) { background: var(--accent-dark); }
+    .note-field { margin-bottom: 14px; }
+    .note-field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .note-field textarea {
+      width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid var(--border);
+      border-radius: 8px; resize: vertical; min-height: 44px; font-family: inherit;
+    }
+    #doneScreen, #noAccessScreen {
+      display: none; text-align: center; padding: 40px 16px;
+    }
+    #doneScreen .icon, #noAccessScreen .icon { font-size: 40px; margin-bottom: 12px; }
+                       #doneScreen p, #noAccessScreen p { font-size: 14px; line-height: 1.8; color: var(--fg); }
+    #doneScreen a.pay-link {
+      display: inline-block; margin-top: 12px; padding: 12px 24px;
+      background: var(--accent); color: #fff; text-decoration: none; border-radius: 10px; font-weight: 600;
+    }
+    #cancelArea { margin-top: 24px; }
+    .cancel-link {
+      background: none; border: none; color: var(--muted); font-size: 13px;
+      text-decoration: underline; cursor: pointer; padding: 8px;
+    }
+    .cancel-confirm-text { font-size: 13px; color: var(--fg); margin-bottom: 10px; }
+    .cancel-btn-row { display: flex; gap: 8px; justify-content: center; }
+    .cancel-yes, .cancel-no {
+      padding: 10px 16px; font-size: 13px; border-radius: 8px; cursor: pointer; font-weight: 600;
+    }
+    .cancel-yes { background: var(--danger); color: #fff; border: none; }
+    .cancel-yes:disabled { background: #d8b3ac; }
+    .cancel-no { background: #fff; color: var(--fg); border: 1px solid var(--border); }
+    .cancel-error { font-size: 13px; color: var(--danger); margin-bottom: 8px; white-space: pre-wrap; }
+    #detailOverlay {
+      display: none;
+      position: fixed; inset: 0; background: rgba(20, 16, 12, 0.55);
+      z-index: 50;
+      padding: 20px 16px;
+      overflow-y: auto;
+    }
+    #detailOverlay.open { display: block; }
+    #detailSheet {
+      background: #fff; border-radius: 14px; max-width: 460px; margin: 20px auto;
+      padding: 16px; position: relative;
+    }
+    #detailClose {
+      position: absolute; top: 10px; right: 10px; width: 32px; height: 32px;
+      border-radius: 50%; border: none; background: #f1ece5; font-size: 16px; cursor: pointer;
+    }
+    #detailImage {
+      width: 100%; max-height: 260px; object-fit: cover; border-radius: 10px; background: #eee; margin-bottom: 12px;
+    }
+    #detailTitle { font-size: 16px; font-weight: 700; margin-bottom: 6px; padding-right: 30px; }
+    #detailPrice { font-size: 14px; margin-bottom: 10px; }
+    #detailDescription { font-size: 13px; line-height: 1.8; white-space: pre-wrap; color: var(--fg); }
+    #detailOos { font-size: 13px; color: var(--danger); font-weight: 600; margin-bottom: 8px; }
+    [hidden] { display: none !important; }
+    .history-link-btn { display:block; width:100%; margin-top:14px; padding:10px; background:#fff; border:1px solid var(--border); border-radius:10px; color:var(--fg); font-size:14px; cursor:pointer; }
+    .history-back-btn { display:inline-block; margin-bottom:14px; padding:8px 12px; background:#fff; border:1px solid var(--border); border-radius:8px; color:var(--fg); font-size:14px; cursor:pointer; }
+    .history-item { background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:10px; }
+    .history-item-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+    .history-item-name { font-weight:bold; }
+    .history-item-date { font-size:12px; color:var(--muted); margin-bottom:6px; }
+    .history-item-total { font-size:14px; margin-bottom:8px; }
+    .history-empty { text-align:center; color:var(--muted); padding:24px 0; }
+    .history-item-cancelled { color:var(--muted); font-size:13px; }
+    .confirm-summary { background:#fff; border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:14px; }
+    .confirm-row { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
+    .confirm-row.item-row { color: var(--fg); }
+    .confirm-row .qty { color: var(--muted); }
+    .confirm-divider { border-top:1px dashed var(--border); margin:8px 0; }
+    .confirm-row.shipping-row .val.loading { color: var(--muted); }
+    .confirm-row.total-row { font-weight:700; font-size:15px; padding-top:6px; }
+    .shipping-fallback { font-size:11.5px; color: var(--muted); margin-top: 4px; }
+    .birthdate-field { margin-bottom: 14px; }
+    .birthdate-field label { display:block; font-size:13px; font-weight:600; margin-bottom:6px; }
+    .birthdate-field input[type="date"] {
+      width:100%; padding:10px; font-size:15px; border:1px solid var(--border); border-radius:8px; font-family:inherit;
+    }
+    .birthdate-field .hint { font-size:11.5px; color: var(--muted); margin-top:4px; }
+    .age-error { font-size:12.5px; color: var(--danger); margin-top:6px; display:none; }
+    .confirm-back-btn { display:inline-block; margin-bottom:14px; padding:8px 12px; background:#fff; border:1px solid var(--border); border-radius:8px; color:var(--fg); font-size:14px; cursor:pointer; }
+    #confirmErrorMsg { color: var(--danger); font-size: 13px; margin: 10px 0; display: none; text-align: center; white-space: pre-wrap; }
+    button#confirmSubmitBtn {
+      width: 100%; padding: 14px; font-size: 16px; font-weight: 600; color: #fff;
+      background: var(--accent); border: none; border-radius: 10px; cursor: pointer; margin-top: 4px;
+    }
+    button#confirmSubmitBtn:disabled { background: #b9b2a8; }
+    button#confirmSubmitBtn:active:not(:disabled) { background: var(--accent-dark); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div id="status">読み込み中...</div>div>
 
-function renderHistoryList(orders) {
-  historyListEl.innerHTML = '';
-  if (!orders.length) {
-    historyListEl.innerHTML = '<div class="history-empty">キャンセル可能な注文はありません。</div>';
-    return;
-  }
-  orders.forEach(function (order) {
-    historyListEl.appendChild(buildHistoryItem(order));
-  });
-}
+      <div id="noAccessScreen">
+        <div class="icon">🔒</div>div>
+        <p id="noAccessMessage">飲食店会員登録が確認できませんでした。</p>p>
+      </div>div>
 
-function buildHistoryItem(order) {
-  var item = document.createElement('div');
-  item.className = 'history-item';
-  item.dataset.draftOrderId = order.draftOrderId;
+      <div id="orderScreen" hidden>
+        <h1>飲食店発注</h1>
+      <div class="age-warning">20歳未満の飲酒は法律で禁止されています。</div>div>
+      <p class="lead">料飲店価格でご注文いただけます。商品名をタップすると詳細をご確認いただけます。カートに入れて「注文内容を確認する」を押してください。</p>p>
+      <div id="paymentBadge"></div>div>
+      <div id="paymentNote" hidden></div>div>
+      <div id="itemsList"></div>div>
+      <div class="note-field">
+      <label for="noteInput">備考（任意）</label>label>
+      <textarea id="noteInput" placeholder="配送日のご希望など"></textarea>
+      </div>div>
+      <div id="errorMsg"></div>div>
+      <button type="button" id="historyOpenBtn" class="history-link-btn">注文履歴・キャンセルはこちら</button>button>
+      </div>div>
+    
+    <div id="confirmScreen" hidden>
+    <button type="button" id="confirmBackBtn" class="confirm-back-btn">← カートに戻る</button>button>
+    <h1>ご注文内容の確認</h1>
+    <div class="age-warning">20歳未満の飲酒は法律で禁止されています。</div>div>
+    <div class="confirm-summary">
+    <div id="confirmItemsList"></div>div>
+    <div class="confirm-divider"></div>div>
+    <div class="confirm-row"><span>商品合計</span><span id="confirmSubtotal">¥0</span></div>div>
+    <div class="confirm-row shipping-row"><span>送料</span><span id="confirmShipping" class="val loading">計算中...</span></div>div>
+    <div id="confirmShippingFallback" class="shipping-fallback" hidden>送料は配送先住所をもとに自動計算されます。表示されない場合は確定後にご案内します。</div>div>
+    <div class="confirm-divider"></div>div>
+    <div class="confirm-row total-row"><span>合計</span><span id="confirmTotal">¥0</span></div>div>
+    </div>div>
+    <div class="birthdate-field">
+    <label for="birthdateInput">ご注文者様の生年月日</label>label>
+    <input type="date" id="birthdateInput">
+    <div class="hint">年齢確認のため、ご注文のたびにご入力をお願いしております。一度ご入力いただくと次回から自動入力されます。</div>div>
+    <div id="ageError" class="age-error">20歳未満のお客様はご注文いただけません。</div>div>
+    </div>div>
+    <div id="confirmErrorMsg"></div>div>
+    <button type="button" id="confirmSubmitBtn" disabled>注文を確定する</button>button>
+    </div>div>
+    
+    <div id="historyScreen" hidden>
+    <button type="button" id="historyBackBtn" class="history-back-btn">← 注文画面に戻る</button>button>
+    <h1>注文履歴</h1>
+    <div id="historyList"></div>div>
+    </div>div>
+    
+    <div id="doneScreen">
+    <div class="icon" id="doneIcon">✅</div>div>
+    <p id="doneMessage"></p>p>
+    <div id="cancelArea">
+    <button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>button>
+    </div>div>
+    </div>div>
+    </div>div>
+  
+  <div id="cartBar">
+  <div class="inner">
+  <div id="cartSummary"><span id="cartCount">0点</span><span class="total" id="cartTotal">¥0</span></div>div>
+  <div id="cartShippingLine" hidden><span>送料（目安）</span><span id="cartShippingValue">計算中...</span></div>div>
+  <button id="orderBtn" disabled>カートが空です</button>button>
+  </div>div>
+  </div>div>
+  
+  <div id="detailOverlay">
+  <div id="detailSheet">
+  <button id="detailClose" type="button" aria-label="閉じる">✕</button>button>
+  <img id="detailImage" src="" alt="">
+  <div id="detailTitle"></div>div>
+  <div id="detailOos" hidden>在庫切れ・現在ご注文いただけません</div>div>
+  <div id="detailPrice"></div>div>
+  <div class="age-warning small">20歳未満の飲酒は法律で禁止されています。</div>div>
+  <div id="detailDescription"></div>div>
+  </div>div>
+  </div>div>
+  
+  <script>
+    const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
+    const LIFF_ID = '2011435226-tRdh8f7W';
 
-  var top = document.createElement('div');
-  top.className = 'history-item-top';
+    const statusEl = document.getElementById('status');
+    const noAccessScreen = document.getElementById('noAccessScreen');
+    const noAccessMessage = document.getElementById('noAccessMessage');
+    const orderScreen = document.getElementById('orderScreen');
+    const paymentBadge = document.getElementById('paymentBadge');
+    const paymentNote = document.getElementById('paymentNote');
+    const itemsList = document.getElementById('itemsList');
+    const noteInput = document.getElementById('noteInput');
+    const errorMsg = document.getElementById('errorMsg');
+    const doneScreen = document.getElementById('doneScreen');
+    const doneMessage = document.getElementById('doneMessage');
+    const doneIcon = document.getElementById('doneIcon');
+    const cancelArea = document.getElementById('cancelArea');
+    let lastDraftOrderId = null;
+    let cancelling = false;
+    const cartBar = document.getElementById('cartBar');
+    const cartCount = document.getElementById('cartCount');
+    const cartTotal = document.getElementById('cartTotal');
+    const orderBtn = document.getElementById('orderBtn');
+    const detailOverlay = document.getElementById('detailOverlay');
+    const detailClose = document.getElementById('detailClose');
+    const detailImage = document.getElementById('detailImage');
+    const detailTitle = document.getElementById('detailTitle');
+    const detailPrice = document.getElementById('detailPrice');
+    const detailDescription = document.getElementById('detailDescription');
+    const detailOos = document.getElementById('detailOos');
 
-  var name = document.createElement('div');
-  name.className = 'history-item-name';
-  name.textContent = order.orderName || '';
-  top.appendChild(name);
+    const confirmScreen = document.getElementById('confirmScreen');
+    const confirmBackBtn = document.getElementById('confirmBackBtn');
+    const confirmItemsList = document.getElementById('confirmItemsList');
+    const confirmSubtotal = document.getElementById('confirmSubtotal');
+    const confirmShipping = document.getElementById('confirmShipping');
+    const confirmShippingFallback = document.getElementById('confirmShippingFallback');
+    const confirmTotal = document.getElementById('confirmTotal');
+    const birthdateInput = document.getElementById('birthdateInput');
+    const ageError = document.getElementById('ageError');
+    const confirmErrorMsg = document.getElementById('confirmErrorMsg');
+    const confirmSubmitBtn = document.getElementById('confirmSubmitBtn');
+    const cartShippingLine = document.getElementById('cartShippingLine');
+    const cartShippingValue = document.getElementById('cartShippingValue');
 
-  var badge = document.createElement('span');
-  badge.className = 'badge ' + (order.isInvoice ? 'invoice' : 'card');
-  badge.textContent = order.isInvoice ? '請求書払い' : 'クレジットカード払い';
-  top.appendChild(badge);
+    let idToken = null;
+    let catalogItems = [];
+    let cart = {};
+    let submitting = false;
+    let savedBirthdate = null;
+    let currentShippingFee = 0;
+    let shippingEstimateToken = 0;
+    let shippingDebounceTimer = null;
 
-  item.appendChild(top);
+    (function setBirthdateMax() {
+      const today = new Date();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      birthdateInput.max = today.getFullYear() + '-' + mm + '-' + dd;
+    })();
 
-  var dateEl = document.createElement('div');
-  dateEl.className = 'history-item-date';
-  dateEl.textContent = formatOrderDate(order.createdAt);
-  item.appendChild(dateEl);
+    function showError(text) {
+      errorMsg.textContent = text;
+      errorMsg.style.display = 'block';
+    }
+    function clearError() {
+      errorMsg.style.display = 'none';
+      errorMsg.textContent = '';
+    }
+    function yen(n) {
+      return '¥' + Math.round(Number(n)).toLocaleString();
+    }
+    function isOutOfStock(item) {
+      return item.inventoryQuantity !== null && item.inventoryQuantity !== undefined && item.inventoryQuantity <= 0;
+    }
+    function unitPrice(item) {
+      return (item.discountedPrice !== null && item.discountedPrice !== undefined) ? Number(item.discountedPrice) : Number(item.price);
+    }
+    function cartItemsPayload() {
+      return Object.keys(cart).map(function (variantId) {
+        return { variantId: variantId, quantity: cart[variantId] };
+      });
+    }
+    function calculateAgeFromBirthdate(birthdateStr) {
+      if (!birthdateStr || typeof birthdateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(birthdateStr)) return null;
+      const parts = birthdateStr.split('-');
+      const y = parseInt(parts[0], 10), mo = parseInt(parts[1], 10), d = parseInt(parts[2], 10);
+      const birth = new Date(y, mo - 1, d);
+    if (birth.getFullYear() !== y || birth.getMonth() !== mo - 1 || birth.getDate() !== d) return null;
+      const today = new Date();
+      if (birth > today) return null;
+      let age = today.getFullYear() - birth.getFullYear();
+      const hadBirthdayThisYear = (today.getMonth() > birth.getMonth()) ||
+        (today.getMonth() === birth.getMonth() && today.getDate() >= birth.getDate());
+      if (!hadBirthdayThisYear) age--;
+      if (age < 0 || age > 130) return null;
+      return age;
+    }
+    function validateBirthdateField() {
+      const age = calculateAgeFromBirthdate(birthdateInput.value);
+      const invalid = age !== null && age < 20;
+      ageError.style.display = invalid ? 'block' : 'none';
+      confirmSubmitBtn.disabled = submitting || invalid || !birthdateInput.value;
+      return age;
+    }
+    function showConfirmError(text) {
+      confirmErrorMsg.textContent = text;
+      confirmErrorMsg.style.display = 'block';
+    }
+    function clearConfirmError() {
+      confirmErrorMsg.style.display = 'none';
+      confirmErrorMsg.textContent = '';
+    }
 
-  var totalEl = document.createElement('div');
-  totalEl.className = 'history-item-total';
-  totalEl.textContent = yen(order.total);
-  item.appendChild(totalEl);
+    async function callBackend(action, extra) {
+      const body = Object.assign({ action: action, idToken: idToken }, extra || {});
+      const res = await fetch(BACKEND_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(body)
+      });
+      return res.json();
+    }
 
-  var cancelAreaEl = document.createElement('div');
-  cancelAreaEl.className = 'history-item-cancel';
-  renderItemCancelDefault(cancelAreaEl);
-  item.appendChild(cancelAreaEl);
+    function renderCancelDefault() {
+      cancelArea.innerHTML = '<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>';
+    }
+    function renderCancelConfirm() {
+      cancelArea.innerHTML =
+        '<p class="cancel-confirm-text">本当にこの注文をキャンセルしますか？</p>' +
+        '<div class="cancel-btn-row">' +
+        '<button type="button" data-action="cancel-yes" class="cancel-yes">はい、キャンセルする</button>' +
+        '<button type="button" data-action="cancel-no" class="cancel-no">戻る</button>' +
+        '</div>';
+    }
+    function renderCancelError(msg) {
+      cancelArea.innerHTML =
+        '<p class="cancel-error"></p>' +
+        '<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>';
+      cancelArea.querySelector('.cancel-error').textContent = msg;
+    }
+    function renderCancelled() {
+      cancelArea.innerHTML = '';
+      doneIcon.textContent = '🚫';
+      doneMessage.textContent = 'ご注文をキャンセルしました。';
+    }
 
-  return item;
-}
-
-function renderItemCancelDefault(container) {
-  container.innerHTML = '<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>';
-}
-
-function renderItemCancelConfirm(container) {
-  container.innerHTML =
-    '<div class="cancel-confirm-text">本当にキャンセルしますか？</div>' +
-    '<div class="cancel-btn-row">' +
-    '<button type="button" data-action="cancel-yes" class="cancel-yes">キャンセルする</button>' +
-    '<button type="button" data-action="cancel-no" class="cancel-no">戻る</button>' +
-    '</div>';
-}
-
-function renderItemCancelError(container, msg) {
-  container.innerHTML = '<div class="cancel-confirm-text">' + (msg || 'キャンセルに失敗しました。') + '</div>' +
-    '<button type="button" data-action="cancel-start" class="cancel-link">もう一度試す</button>';
-}
-
-function renderItemCancelled(container) {
-  container.innerHTML = '<div class="history-item-cancelled">この注文はキャンセルされました。</div>';
-}
-
-if (historyListEl) {
-  historyListEl.addEventListener('click', async function (ev) {
-    var btn = ev.target.closest ? ev.target.closest('[data-action]') : null;
-    if (!btn) return;
-    var itemEl = btn.closest('.history-item');
-    if (!itemEl) return;
-    var cancelAreaEl = itemEl.querySelector('.history-item-cancel');
-    var action = btn.dataset.action;
-    var draftOrderIdVal = itemEl.dataset.draftOrderId;
-
-    if (action === 'cancel-start') {
-      renderItemCancelConfirm(cancelAreaEl);
-    } else if (action === 'cancel-no') {
-      renderItemCancelDefault(cancelAreaEl);
-    } else if (action === 'cancel-yes') {
-      if (historyBusy) return;
-      historyBusy = true;
-      var yesBtn = cancelAreaEl.querySelector('.cancel-yes');
-      if (yesBtn) yesBtn.disabled = true;
-      try {
-        var result = await callBackend('cancel_restaurant_order', { draftOrderId: draftOrderIdVal });
-        if (result.ok) {
-          renderItemCancelled(cancelAreaEl);
-        } else {
-          renderItemCancelError(cancelAreaEl, result.error);
+    cancelArea.addEventListener('click', async function (e) {
+      const action = e.target.getAttribute('data-action');
+      if (!action) return;
+      if (action === 'cancel-start') {
+        renderCancelConfirm();
+      } else if (action === 'cancel-no') {
+        renderCancelDefault();
+      } else if (action === 'cancel-yes') {
+        if (cancelling) return;
+        cancelling = true;
+        e.target.disabled = true;
+        e.target.textContent = 'キャンセル処理中...';
+        try {
+          const data = await callBackend('cancel_restaurant_order', { draftOrderId: lastDraftOrderId });
+          if (data && data.ok) {
+            renderCancelled();
+          } else {
+            renderCancelError((data && data.error) || '注文のキャンセルに失敗しました。時間をおいて再度お試しください。');
+          }
+        } catch (err) {
+          console.error('cancel failed', err);
+          renderCancelError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
+        } finally {
+          cancelling = false;
         }
-      } catch (e) {
-        renderItemCancelError(cancelAreaEl);
-      } finally {
-        historyBusy = false;
+      }
+    });
+
+    function openDetail(item) {
+      detailImage.src = (item.images && item.images.length ? item.images[0] : item.imageUrl) || '';
+      detailTitle.textContent = item.title;
+      const hasDiscount = item.discountedPrice !== null && item.discountedPrice !== undefined && Number(item.discountedPrice) !== Number(item.price);
+      detailPrice.innerHTML = hasDiscount
+      ? '<span class="price-original">' + yen(item.price) + '</span><span class="price-discounted">' + yen(item.discountedPrice) + '（料飲店価格）</span>'
+        : yen(item.price);
+      detailDescription.textContent = item.description || '';
+      detailOos.hidden = !isOutOfStock(item);
+      detailOverlay.classList.add('open');
+    }
+    function closeDetail() {
+      detailOverlay.classList.remove('open');
+    }
+    detailClose.addEventListener('click', closeDetail);
+    detailOverlay.addEventListener('click', function (e) {
+      if (e.target === detailOverlay) closeDetail();
+    });
+
+    function renderCatalog(items) {
+      itemsList.innerHTML = '';
+      items.forEach(function (item) {
+        const outOfStock = isOutOfStock(item);
+        const hasDiscount = item.discountedPrice !== null && item.discountedPrice !== undefined && Number(item.discountedPrice) !== Number(item.price);
+
+        const card = document.createElement('div');
+        card.className = 'product-card' + (outOfStock ? ' sold-out' : '');
+
+        const tapArea = document.createElement('button');
+        tapArea.type = 'button';
+        tapArea.className = 'product-tap';
+        tapArea.addEventListener('click', function () { openDetail(item); });
+
+        const img = document.createElement('img');
+        img.src = (item.images && item.images.length ? item.images[0] : item.imageUrl) || '';
+        img.alt = '';
+        tapArea.appendChild(img);
+
+        const info = document.createElement('div');
+        info.className = 'product-info';
+        const title = document.createElement('div');
+        title.className = 'product-title';
+        title.textContent = item.title;
+        info.appendChild(title);
+
+        const detailLink = document.createElement('div');
+        detailLink.className = 'product-detail-link';
+        detailLink.textContent = '商品詳細を見る';
+        info.appendChild(detailLink);
+
+        const price = document.createElement('div');
+        price.className = 'product-price';
+        if (hasDiscount) {
+          const orig = document.createElement('span');
+          orig.className = 'price-original';
+          orig.textContent = yen(item.price);
+          const disc = document.createElement('span');
+          disc.className = 'price-discounted';
+          disc.textContent = yen(item.discountedPrice) + '（料飲店価格）';
+          price.appendChild(orig);
+          price.appendChild(disc);
+        } else {
+          price.textContent = yen(item.price);
+        }
+        info.appendChild(price);
+
+        if (outOfStock) {
+          const oos = document.createElement('div');
+          oos.className = 'product-oos';
+          oos.textContent = '在庫切れ';
+          info.appendChild(oos);
+        }
+        tapArea.appendChild(info);
+        card.appendChild(tapArea);
+
+        const qtyControl = document.createElement('div');
+        qtyControl.className = 'qty-control';
+        const minusBtn = document.createElement('button');
+        minusBtn.type = 'button';
+        minusBtn.className = 'qty-btn';
+        minusBtn.textContent = '−';
+        minusBtn.disabled = outOfStock;
+        const qtyValue = document.createElement('span');
+        qtyValue.className = 'qty-value';
+        qtyValue.textContent = '0';
+        const plusBtn = document.createElement('button');
+        plusBtn.type = 'button';
+        plusBtn.className = 'qty-btn';
+        plusBtn.textContent = '＋';
+        plusBtn.disabled = outOfStock;
+
+        function updateQty(delta) {
+          if (outOfStock) return;
+          const current = cart[item.variantId] || 0;
+          const next = Math.max(0, current + delta);
+          if (next === 0) delete cart[item.variantId]; else cart[item.variantId] = next;
+          qtyValue.textContent = String(next);
+          updateCartBar();
+        }
+        minusBtn.addEventListener('click', function () { updateQty(-1); });
+        plusBtn.addEventListener('click', function () { updateQty(1); });
+
+        qtyControl.appendChild(minusBtn);
+        qtyControl.appendChild(qtyValue);
+        qtyControl.appendChild(plusBtn);
+        card.appendChild(qtyControl);
+
+        itemsList.appendChild(card);
+      });
+    }
+
+    function cartSubtotal() {
+      const variantIds = Object.keys(cart);
+      let total = 0;
+      variantIds.forEach(function (id) {
+        const item = catalogItems.find(function (i) { return i.variantId === id; });
+        if (item) total += unitPrice(item) * cart[id];
+      });
+      return total;
+    }
+
+    function updateCartBar() {
+      const variantIds = Object.keys(cart);
+      const count = variantIds.reduce(function (sum, id) { return sum + cart[id]; }, 0);
+      const total = cartSubtotal();
+      cartCount.textContent = count + '点';
+      cartTotal.textContent = yen(total);
+      cartBar.style.display = count > 0 ? 'block' : 'none';
+      orderBtn.disabled = count === 0 || submitting;
+      orderBtn.textContent = count === 0 ? 'カートが空です' : '注文内容を確認する';
+      if (count === 0) {
+        cartShippingLine.hidden = true;
+        currentShippingFee = 0;
+      } else {
+        scheduleShippingEstimate();
       }
     }
-  });
-}
-init();
-</script>
-</body>
+
+    function scheduleShippingEstimate() {
+      if (shippingDebounceTimer) clearTimeout(shippingDebounceTimer);
+      shippingDebounceTimer = setTimeout(runShippingEstimate, 500);
+    }
+
+    async function runShippingEstimate() {
+      const items = cartItemsPayload();
+      if (!items.length) return;
+      const token = ++shippingEstimateToken;
+      cartShippingLine.hidden = false;
+      cartShippingValue.textContent = '計算中...';
+      if (!confirmScreen.hidden) {
+        confirmShipping.textContent = '計算中...';
+        confirmShipping.classList.add('loading');
+    confirmShippingFallback.hidden = true;
+      }
+      try {
+        const data = await callBackend('estimate_restaurant_order', { items: items });
+        if (token !== shippingEstimateToken) return; // stale response, cart changed since
+        if (data && data.ok) {
+          currentShippingFee = Number(data.shippingFee) || 0;
+          if (data.hasShippingAddress) {
+            cartShippingValue.textContent = yen(currentShippingFee);
+          } else {
+            cartShippingValue.textContent = '確定時に計算';
+          }
+          if (!confirmScreen.hidden) {
+            renderConfirmTotals(data);
+          }
+        } else {
+          cartShippingValue.textContent = '確定時に計算';
+          if (!confirmScreen.hidden) {
+            confirmShipping.textContent = '—';
+            confirmShipping.classList.remove('loading');
+            confirmShippingFallback.hidden = false;
+            renderConfirmTotals(null);
+          }
+        }
+      } catch (err) {
+        console.error('shipping estimate failed', err);
+        if (token !== shippingEstimateToken) return;
+        cartShippingValue.textContent = '確定時に計算';
+        if (!confirmScreen.hidden) {
+          confirmShipping.textContent = '—';
+          confirmShipping.classList.remove('loading');
+          confirmShippingFallback.hidden = false;
+          renderConfirmTotals(null);
+        }
+      }
+    }
+
+    function renderConfirmTotals(estimateData) {
+      const subtotal = cartSubtotal();
+      confirmSubtotal.textContent = yen(subtotal);
+      const shippingFee = (estimateData && estimateData.ok && estimateData.hasShippingAddress) ? Number(estimateData.shippingFee) || 0 : 0;
+      if (estimateData && estimateData.ok) {
+        confirmShipping.textContent = estimateData.hasShippingAddress ? yen(shippingFee) : '確定時に計算';
+        confirmShipping.classList.remove('loading');
+        confirmShippingFallback.hidden = estimateData.hasShippingAddress;
+      }
+      confirmTotal.textContent = yen(subtotal + shippingFee);
+    }
+
+    function renderConfirmItemsList() {
+      confirmItemsList.innerHTML = '';
+      Object.keys(cart).forEach(function (variantId) {
+        const item = catalogItems.find(function (i) { return i.variantId === variantId; });
+        if (!item) return;
+        const qty = cart[variantId];
+        const row = document.createElement('div');
+        row.className = 'confirm-row item-row';
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = item.title + ' ';
+        const qtySpan = document.createElement('span');
+        qtySpan.className = 'qty';
+        qtySpan.textContent = 'x' + qty;
+        nameSpan.appendChild(qtySpan);
+        const priceSpan = document.createElement('span');
+        priceSpan.textContent = yen(unitPrice(item) * qty);
+        row.appendChild(nameSpan);
+        row.appendChild(priceSpan);
+        confirmItemsList.appendChild(row);
+      });
+    }
+
+    function openConfirmScreen() {
+      clearConfirmError();
+      renderConfirmItemsList();
+      confirmSubtotal.textContent = yen(cartSubtotal());
+      confirmShipping.textContent = '計算中...';
+      confirmShipping.classList.add('loading');
+      confirmShippingFallback.hidden = true;
+      confirmTotal.textContent = yen(cartSubtotal());
+      if (!birthdateInput.value && savedBirthdate) {
+        birthdateInput.value = savedBirthdate;
+      }
+      validateBirthdateField();
+      orderScreen.hidden = true;
+      confirmScreen.hidden = false;
+      cartBar.style.display = 'none';
+      runShippingEstimate();
+    }
+
+    function closeConfirmScreen() {
+      confirmScreen.hidden = true;
+      orderScreen.hidden = false;
+      updateCartBar();
+    }
+
+    async function init() {
+      try {
+        await liff.init({ liffId: LIFF_ID });
+        if (!liff.isLoggedIn()) {
+          liff.login();
+          return;
+        }
+
+        idToken = liff.getIDToken();
+        if (!idToken) {
+          statusEl.textContent = 'ログイン情報を取得できませんでした。時間をおいて再度お試しください。';
+          return;
+    }
+
+  const data = await callBackend('get_ordering_catalog');
+        if (!data || !data.ok) {
+          statusEl.hidden = true;
+          noAccessMessage.textContent = (data && data.error) || '飲食店会員登録が確認できませんでした。';
+          noAccessScreen.style.display = 'block';
+          return;
+        }
+
+        catalogItems = data.items || [];
+        if (data.customer && data.customer.savedBirthdate) {
+          savedBirthdate = data.customer.savedBirthdate;
+          birthdateInput.value = savedBirthdate;
+        }
+        if (data.customer && data.customer.invoiceOk) {
+          paymentBadge.innerHTML = '<span class="badge invoice">お支払い: 請求書（月末締め）</span>';
+          paymentNote.hidden = false;
+          paymentNote.textContent = '💳 クレジットカード払いなら振込手数料がかかりません。切り替えをご希望の場合は、注文完了画面でご案内するリンクからお選びいただけます。';
+        } else {
+          paymentBadge.innerHTML = '<span class="badge card">お支払い: カード決済</span>';
+          paymentNote.hidden = true;
+        }
+        renderCatalog(catalogItems);
+
+        statusEl.hidden = true;
+        orderScreen.hidden = false;
+        updateCartBar();
+      } catch (err) {
+        console.error('init failed', err);
+        statusEl.textContent = '読み込みに失敗しました。時間をおいて再度お試しください。';
+      }
+    }
+
+    orderBtn.addEventListener('click', function () {
+      if (submitting) return;
+      clearError();
+      const items = cartItemsPayload();
+      if (!items.length) return;
+      openConfirmScreen();
+    });
+
+    confirmBackBtn.addEventListener('click', function () {
+      closeConfirmScreen();
+    });
+
+    birthdateInput.addEventListener('change', function () {
+      clearConfirmError();
+      validateBirthdateField();
+    });
+    birthdateInput.addEventListener('input', function () {
+      clearConfirmError();
+      validateBirthdateField();
+    });
+
+    confirmSubmitBtn.addEventListener('click', async function () {
+      if (submitting) return;
+      clearConfirmError();
+      const items = cartItemsPayload();
+      if (!items.length) {
+        closeConfirmScreen();
+        return;
+      }
+      const birthdate = birthdateInput.value;
+      if (!birthdate) {
+        showConfirmError('生年月日を入力してください。');
+        return;
+      }
+      const age = validateBirthdateField();
+      if (age === null) {
+        showConfirmError('生年月日を正しく入力してください。');
+        return;
+      }
+      if (age < 20) {
+        return; // ageError already shown, button already disabled
+      }
+
+      submitting = true;
+      confirmSubmitBtn.disabled = true;
+      confirmSubmitBtn.textContent = '送信中...';
+
+      try {
+        const data = await callBackend('create_restaurant_order', { items: items, note: noteInput.value.trim(), birthdate: birthdate });
+        if (data && data.ok) {
+          savedBirthdate = birthdate;
+          confirmScreen.hidden = true;
+          orderScreen.hidden = true;
+          cartBar.style.display = 'none';
+          lastDraftOrderId = data.draftOrderId || null;
+          doneIcon.textContent = '✅';
+          if (lastDraftOrderId) {
+            renderCancelDefault();
+          } else {
+            cancelArea.innerHTML = '';
+          }
+          if (data.isInvoice) {
+            doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '<br><br>お支払いは月末締めのご請求となります。請求書は追ってLINEでお送りします。' +
+              (data.invoiceUrl ? '<br><br>💳 クレジットカード払いなら振込手数料がかかりません。今すぐお支払いを済ませたい場合はこちらからどうぞ。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">カードでお支払いに進む</a>' : '');
+                                       } else {
+            doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '<br><br>下記よりお支払い（カード決済）をお願いいたします。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">お支払いに進む</a>';
+          }
+          doneScreen.style.display = 'block';
+        } else {
+          showConfirmError((data && data.error) || '注文の送信に失敗しました。時間をおいて再度お試しください。');
+          submitting = false;
+          confirmSubmitBtn.textContent = '注文を確定する';
+          validateBirthdateField();
+        }
+      } catch (err) {
+        console.error('order submit failed', err);
+        showConfirmError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
+        submitting = false;
+        confirmSubmitBtn.textContent = '注文を確定する';
+        validateBirthdateField();
+      }
+    });
+
+    var historyOpenBtnEl = document.getElementById('historyOpenBtn');
+    var historyBackBtnEl = document.getElementById('historyBackBtn');
+    var historyScreenEl = document.getElementById('historyScreen');
+    var historyListEl = document.getElementById('historyList');
+    var historyBusy = false;
+
+    function formatOrderDate(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return '';
+        return d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' +
+              ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+    }
+
+    function openHistory() {
+        var orderScreenEl = document.getElementById('orderScreen');
+        if (orderScreenEl) orderScreenEl.hidden = true;
+        if (historyScreenEl) historyScreenEl.hidden = false;
+        loadOrderHistory();
+    }
+
+    function closeHistory() {
+        if (historyScreenEl) historyScreenEl.hidden = true;
+        var orderScreenEl = document.getElementById('orderScreen');
+        if (orderScreenEl) orderScreenEl.hidden = false;
+    }
+
+    if (historyOpenBtnEl) historyOpenBtnEl.addEventListener('click', openHistory);
+    if (historyBackBtnEl) historyBackBtnEl.addEventListener('click', closeHistory);
+
+    async function loadOrderHistory() {
+        if (!historyListEl) return;
+        historyListEl.innerHTML = '<div class="history-empty">読み込み中...</div>';
+        try {
+              var data = await callBackend('get_my_orders');
+              if (!data.ok) {
+                      historyListEl.innerHTML = '<div class="history-empty">注文履歴の取得に失敗しました。</div>';
+                      return;
+              }
+              renderHistoryList(data.orders || []);
+        } catch (e) {
+              historyListEl.innerHTML = '<div class="history-empty">注文履歴の取得に失敗しました。</div>';
+        }
+    }
+
+    function renderHistoryList(orders) {
+        historyListEl.innerHTML = '';
+        if (!orders.length) {
+              historyListEl.innerHTML = '<div class="history-empty">キャンセル可能な注文はありません。</div>';
+              return;
+        }
+        orders.forEach(function (order) {
+              historyListEl.appendChild(buildHistoryItem(order));
+        });
+    }
+
+    function buildHistoryItem(order) {
+        var item = document.createElement('div');
+        item.className = 'history-item';
+        item.dataset.draftOrderId = order.draftOrderId;
+
+        var top = document.createElement('div');
+        top.className = 'history-item-top';
+
+        var name = document.createElement('div');
+        name.className = 'history-item-name';
+        name.textContent = order.orderName || '';
+        top.appendChild(name);
+
+        var badge = document.createElement('span');
+        badge.className = 'badge ' + (order.isInvoice ? 'invoice' : 'card');
+        badge.textContent = order.isInvoice ? '請求書払い' : 'クレジットカード払い';
+        top.appendChild(badge);
+
+        item.appendChild(top);
+
+        var dateEl = document.createElement('div');
+      dateEl.className = 'history-item-date';
+        dateEl.textContent = formatOrderDate(order.createdAt);
+        item.appendChild(dateEl);
+
+        var totalEl = document.createElement('div');
+        totalEl.className = 'history-item-total';
+        totalEl.textContent = yen(order.total);
+        item.appendChild(totalEl);
+
+        var cancelAreaEl = document.createElement('div');
+        cancelAreaEl.className = 'history-item-cancel';
+        renderItemCancelDefault(cancelAreaEl);
+        item.appendChild(cancelAreaEl);
+
+        return item;
+    }
+
+    function renderItemCancelDefault(container) {
+        container.innerHTML = '<button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>';
+    }
+
+    function renderItemCancelConfirm(container) {
+        container.innerHTML =
+              '<div class="cancel-confirm-text">本当にキャンセルしますか？</div>' +
+              '<div class="cancel-btn-row">' +
+              '<button type="button" data-action="cancel-yes" class="cancel-yes">キャンセルする</button>' +
+              '<button type="button" data-action="cancel-no" class="cancel-no">戻る</button>' +
+              '</div>';
+    }
+
+    function renderItemCancelError(container, msg) {
+        container.innerHTML = '<div class="cancel-confirm-text">' + (msg || 'キャンセルに失敗しました。') + '</div>' +
+              '<button type="button" data-action="cancel-start" class="cancel-link">もう一度試す</button>';
+    }
+
+    function renderItemCancelled(container) {
+        container.innerHTML = '<div class="history-item-cancelled">この注文はキャンセルされました。</div>';
+    }
+
+    if (historyListEl) {
+        historyListEl.addEventListener('click', async function (ev) {
+              var btn = ev.target.closest ? ev.target.closest('[data-action]') : null;
+              if (!btn) return;
+              var itemEl = btn.closest('.history-item');
+              if (!itemEl) return;
+              var cancelAreaEl = itemEl.querySelector('.history-item-cancel');
+              var action = btn.dataset.action;
+              var draftOrderIdVal = itemEl.dataset.draftOrderId;
+
+              if (action === 'cancel-start') {
+                      renderItemCancelConfirm(cancelAreaEl);
+              } else if (action === 'cancel-no') {
+                      renderItemCancelDefault(cancelAreaEl);
+              } else if (action === 'cancel-yes') {
+                      if (historyBusy) return;
+                      historyBusy = true;
+                      var yesBtn = cancelAreaEl.querySelector('.cancel-yes');
+                      if (yesBtn) yesBtn.disabled = true;
+                      try {
+                                var result = await callBackend('cancel_restaurant_order', { draftOrderId: draftOrderIdVal });
+                                if (result.ok) {
+                                            renderItemCancelled(cancelAreaEl);
+                                } else {
+                                            renderItemCancelError(cancelAreaEl, result.error);
+                                }
+                      } catch (e) {
+                                renderItemCancelError(cancelAreaEl);
+                      } finally {
+                                historyBusy = false;
+                      }
+              }
+        });
+    }
+    init();
+  </script>
+  </body>
 </html>
+
+  </script></span></span></h1></h1>
+  </body>
+  </style></title>
+  </head>
