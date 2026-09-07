@@ -188,9 +188,13 @@ width: 100%; max-height: 260px; object-fit: cover; border-radius: 10px; backgrou
 .history-item-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
 .history-item-name { font-weight:bold; }
 .history-item-date { font-size:12px; color:var(--muted); margin-bottom:6px; }
-.history-item-total { font-size:14px; margin-bottom:8px; }
+.history-item-total { font-size:14px; margin-bottom:8px; font-weight:700; }
 .history-empty { text-align:center; color:var(--muted); padding:24px 0; }
 .history-item-cancelled { color:var(--muted); font-size:13px; }
+.history-item-items { border-top:1px dashed var(--border); border-bottom:1px dashed var(--border); margin:6px 0; padding:6px 0; }
+.history-item-row { display:flex; justify-content:space-between; font-size:12.5px; color:var(--fg); padding:2px 0; }
+.history-item-breakdown { margin-bottom:4px; }
+.history-item-breakdown .history-item-row { color: var(--muted); }
 .confirm-summary { background:#fff; border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:14px; }
 .confirm-row { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
 .confirm-row.item-row { color: var(--fg); }
@@ -201,8 +205,13 @@ width: 100%; max-height: 260px; object-fit: cover; border-radius: 10px; backgrou
 .shipping-fallback { font-size:11.5px; color: var(--muted); margin-top: 4px; }
 .birthdate-field { margin-bottom: 14px; }
 .birthdate-field label { display:block; font-size:13px; font-weight:600; margin-bottom:6px; }
-.birthdate-field input[type="date"] {
+.birthdate-field input[type="date"], .birthdate-field input[type="text"] {
 width:100%; padding:10px; font-size:15px; border:1px solid var(--border); border-radius:8px; font-family:inherit;
+}
+.birthdate-field input[type="date"] { margin-top:8px; }
+.birthdate-calendar-toggle {
+display:inline-block; margin-top:8px; padding:7px 12px; background:#fff; border:1px solid var(--border);
+border-radius:8px; color:var(--muted); font-size:12.5px; cursor:pointer;
 }
 .birthdate-field .hint { font-size:11.5px; color: var(--muted); margin-top:4px; }
 .age-error { font-size:12.5px; color: var(--danger); margin-top:6px; display:none; }
@@ -254,9 +263,11 @@ button#confirmSubmitBtn:active:not(:disabled) { background: var(--accent-dark); 
 <div class="confirm-row total-row"><span>合計</span><span id="confirmTotal">¥0</span></div>
 </div>
 <div class="birthdate-field">
-<label for="birthdateInput">ご注文者様の生年月日</label>
-<input type="date" id="birthdateInput">
-<div class="hint">年齢確認のため、ご注文のたびにご入力をお願いしております。一度ご入力いただくと次回から自動入力されます。</div>
+<label for="birthdateTextInput">ご注文者様の生年月日</label>
+<input type="text" id="birthdateTextInput" autocomplete="bday" placeholder="例：1990/01/15" maxlength="12">
+<button type="button" id="birthdateCalendarToggle" class="birthdate-calendar-toggle">📅 カレンダーで選択</button>
+<input type="date" id="birthdateInput" hidden>
+<div class="hint">「1990/01/15」のように入力するか、「カレンダーで選択」からもお選びいただけます。年齢確認のため、ご注文のたびにご確認をお願いしております。一度ご入力いただくと次回から自動入力されます。</div>
 <div id="ageError" class="age-error">20歳未満のお客様はご注文いただけません。</div>
 </div>
 <div id="confirmErrorMsg"></div>
@@ -337,6 +348,8 @@ const confirmShipping = document.getElementById('confirmShipping');
 const confirmShippingFallback = document.getElementById('confirmShippingFallback');
 const confirmTotal = document.getElementById('confirmTotal');
 const birthdateInput = document.getElementById('birthdateInput');
+const birthdateTextInput = document.getElementById('birthdateTextInput');
+const birthdateCalendarToggle = document.getElementById('birthdateCalendarToggle');
 const ageError = document.getElementById('ageError');
 const confirmErrorMsg = document.getElementById('confirmErrorMsg');
 const confirmSubmitBtn = document.getElementById('confirmSubmitBtn');
@@ -381,9 +394,20 @@ return Object.keys(cart).map(function (variantId) {
 return { variantId: variantId, quantity: cart[variantId] };
 });
 }
+function normalizeBirthdateInput(str) {
+if (!str || typeof str !== 'string') return null;
+let s = str.trim().replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+let m = s.match(/^(\d{4})[\/\-.年](\d{1,2})[\/\-.月]?(\d{1,2})日?$/);
+if (!m) m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+if (!m) return null;
+const y = m[1], mo = ('0' + parseInt(m[2], 10)).slice(-2), d = ('0' + parseInt(m[3], 10)).slice(-2);
+if (mo === '00' || d === '00' || parseInt(mo, 10) > 12 || parseInt(d, 10) > 31) return null;
+return y + '-' + mo + '-' + d;
+}
 function calculateAgeFromBirthdate(birthdateStr) {
-if (!birthdateStr || typeof birthdateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(birthdateStr)) return null;
-const parts = birthdateStr.split('-');
+const normalized = normalizeBirthdateInput(birthdateStr);
+if (!normalized) return null;
+const parts = normalized.split('-');
 const y = parseInt(parts[0], 10), mo = parseInt(parts[1], 10), d = parseInt(parts[2], 10);
 const birth = new Date(y, mo - 1, d);
 if (birth.getFullYear() !== y || birth.getMonth() !== mo - 1 || birth.getDate() !== d) return null;
@@ -396,11 +420,17 @@ if (!hadBirthdayThisYear) age--;
 if (age < 0 || age > 130) return null;
 return age;
 }
+function applyBirthdateValue(normalized) {
+if (!normalized) return;
+const parts = normalized.split('-');
+birthdateTextInput.value = parts.length === 3 ? (parts[0] + '/' + parts[1] + '/' + parts[2]) : normalized;
+birthdateInput.value = normalized;
+}
 function validateBirthdateField() {
-const age = calculateAgeFromBirthdate(birthdateInput.value);
+const age = calculateAgeFromBirthdate(birthdateTextInput.value);
 const invalid = age !== null && age < 20;
 ageError.style.display = invalid ? 'block' : 'none';
-confirmSubmitBtn.disabled = submitting || invalid || !birthdateInput.value;
+confirmSubmitBtn.disabled = submitting || invalid || !birthdateTextInput.value;
 return age;
 }
 function showConfirmError(text) {
@@ -704,8 +734,8 @@ confirmShipping.textContent = '計算中...';
 confirmShipping.classList.add('loading');
 confirmShippingFallback.hidden = true;
 confirmTotal.textContent = yen(cartSubtotal());
-if (!birthdateInput.value && savedBirthdate) {
-birthdateInput.value = savedBirthdate;
+if (!birthdateTextInput.value && savedBirthdate) {
+applyBirthdateValue(savedBirthdate);
 }
 validateBirthdateField();
 orderScreen.hidden = true;
@@ -745,7 +775,7 @@ return;
 catalogItems = data.items || [];
 if (data.customer && data.customer.savedBirthdate) {
 savedBirthdate = data.customer.savedBirthdate;
-birthdateInput.value = savedBirthdate;
+applyBirthdateValue(savedBirthdate);
 }
 if (data.customer && data.customer.invoiceOk) {
 paymentBadge.innerHTML = '<span class="badge invoice">お支払い: 請求書（月末締め）</span>';
@@ -778,11 +808,29 @@ confirmBackBtn.addEventListener('click', function () {
 closeConfirmScreen();
 });
 
-birthdateInput.addEventListener('change', function () {
+birthdateTextInput.addEventListener('input', function () {
 clearConfirmError();
 validateBirthdateField();
 });
-birthdateInput.addEventListener('input', function () {
+birthdateTextInput.addEventListener('blur', function () {
+const normalized = normalizeBirthdateInput(birthdateTextInput.value);
+if (normalized) {
+const p = normalized.split('-');
+birthdateTextInput.value = p[0] + '/' + p[1] + '/' + p[2];
+birthdateInput.value = normalized;
+}
+});
+birthdateCalendarToggle.addEventListener('click', function () {
+birthdateInput.hidden = !birthdateInput.hidden;
+if (!birthdateInput.hidden && birthdateInput.showPicker) {
+try { birthdateInput.showPicker(); } catch (e) {}
+}
+});
+birthdateInput.addEventListener('change', function () {
+if (birthdateInput.value) {
+const p = birthdateInput.value.split('-');
+birthdateTextInput.value = p[0] + '/' + p[1] + '/' + p[2];
+}
 clearConfirmError();
 validateBirthdateField();
 });
@@ -795,12 +843,16 @@ if (!items.length) {
 closeConfirmScreen();
 return;
 }
-const birthdate = birthdateInput.value;
-if (!birthdate) {
+if (!birthdateTextInput.value) {
 showConfirmError('生年月日を入力してください。');
 return;
 }
-const age = validateBirthdateField();
+const birthdate = normalizeBirthdateInput(birthdateTextInput.value);
+if (!birthdate) {
+showConfirmError('生年月日を正しい形式で入力してください（例：1990/01/15）。');
+return;
+}
+const age = calculateAgeFromBirthdate(birthdate);
 if (age === null) {
 showConfirmError('生年月日を正しく入力してください。');
 return;
@@ -930,9 +982,40 @@ function buildHistoryItem(order) {
   dateEl.textContent = formatOrderDate(order.createdAt);
   item.appendChild(dateEl);
 
+  if (order.items && order.items.length) {
+    var itemsEl = document.createElement('div');
+    itemsEl.className = 'history-item-items';
+    order.items.forEach(function (li) {
+      var row = document.createElement('div');
+      row.className = 'history-item-row';
+      var nameSpan = document.createElement('span');
+      nameSpan.textContent = li.title + ' × ' + li.quantity;
+      var priceSpan = document.createElement('span');
+      priceSpan.textContent = yen(li.lineTotal);
+      row.appendChild(nameSpan);
+      row.appendChild(priceSpan);
+      itemsEl.appendChild(row);
+    });
+    item.appendChild(itemsEl);
+  }
+
+  var breakdownEl = document.createElement('div');
+  breakdownEl.className = 'history-item-breakdown';
+  if (order.subtotal !== undefined && order.subtotal !== null) {
+    var subRow = document.createElement('div');
+    subRow.className = 'history-item-row';
+    subRow.innerHTML = '<span>商品合計</span><span>' + yen(order.subtotal) + '</span>';
+    breakdownEl.appendChild(subRow);
+  }
+  var shipRow = document.createElement('div');
+  shipRow.className = 'history-item-row';
+  shipRow.innerHTML = '<span>送料</span><span>' + yen(order.shippingFee || 0) + '</span>';
+  breakdownEl.appendChild(shipRow);
+  item.appendChild(breakdownEl);
+
   var totalEl = document.createElement('div');
   totalEl.className = 'history-item-total';
-  totalEl.textContent = yen(order.total);
+  totalEl.textContent = '合計 ' + yen(order.total);
   item.appendChild(totalEl);
 
   var cancelAreaEl = document.createElement('div');
