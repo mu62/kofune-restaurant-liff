@@ -46,6 +46,10 @@ margin-bottom: 12px;
 }
 .badge.card { background: #e8f3ee; color: var(--accent-dark); }
 .badge.invoice { background: #eef1f6; color: #33445a; }
+#paymentNote {
+display: block; font-size: 12px; line-height: 1.6; color: var(--accent-dark);
+background: #e8f3ee; border-radius: 8px; padding: 8px 10px; margin: -4px 0 14px;
+}
 .product-card {
 background: #fff;
 border: 1px solid var(--border);
@@ -176,6 +180,7 @@ width: 100%; max-height: 260px; object-fit: cover; border-radius: 10px; backgrou
 <h1>飲食店発注</h1>
 <p class="lead">料飲店価格でご注文いただけます。商品名をタップすると詳細をご確認いただけます。カートに入れて「注文を確定する」を押してください。</p>
 <div id="paymentBadge"></div>
+<div id="paymentNote" hidden></div>
 <div id="itemsList"></div>
 <div class="note-field">
 <label for="noteInput">備考（任意）</label>
@@ -220,6 +225,7 @@ const noAccessScreen = document.getElementById('noAccessScreen');
 const noAccessMessage = document.getElementById('noAccessMessage');
 const orderScreen = document.getElementById('orderScreen');
 const paymentBadge = document.getElementById('paymentBadge');
+const paymentNote = document.getElementById('paymentNote');
 const itemsList = document.getElementById('itemsList');
 const noteInput = document.getElementById('noteInput');
 const errorMsg = document.getElementById('errorMsg');
@@ -474,9 +480,14 @@ return;
 }
 
 catalogItems = data.items || [];
-paymentBadge.innerHTML = data.customer && data.customer.invoiceOk
-? '<span class="badge invoice">お支払い: 請求書（月末締め）</span>'
-: '<span class="badge card">お支払い: カード決済</span>';
+if (data.customer && data.customer.invoiceOk) {
+paymentBadge.innerHTML = '<span class="badge invoice">お支払い: 請求書（月末締め）</span>';
+paymentNote.hidden = false;
+paymentNote.textContent = '💳 クレジットカード払いなら振込手数料がかかりません。切り替えをご希望の場合は、注文完了画面でご案内するリンクからお選びいただけます。';
+} else {
+paymentBadge.innerHTML = '<span class="badge card">お支払い: カード決済</span>';
+paymentNote.hidden = true;
+}
 renderCatalog(catalogItems);
 
 statusEl.hidden = true;
@@ -513,9 +524,10 @@ renderCancelDefault();
 cancelArea.innerHTML = '';
 }
 if (data.isInvoice) {
-doneMessage.textContent = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '\n\nお支払いは月末締めのご請求となります。請求書は追ってLINEでお送りします。';
+doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '<br><br>お支払いは月末締めのご請求となります。請求書は追ってLINEでお送りします。' +
+(data.invoiceUrl ? '<br><br>💳 クレジットカード払いなら振込手数料がかかりません。今すぐお支払いを済ませたい場合はこちらからどうぞ。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">カードでお支払いに進む</a>' : '');
 } else {
-doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '\n\n下記よりお支払い（カード決済）をお願いいたします。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">お支払いに進む</a>';
+doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '<br><br>下記よりお支払い（カード決済）をお願いいたします。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">お支払いに進む</a>';
 }
 doneScreen.style.display = 'block';
 } else {
