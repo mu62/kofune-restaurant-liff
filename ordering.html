@@ -237,7 +237,7 @@ button#confirmSubmitBtn:active:not(:disabled) { background: var(--accent-dark); 
 <div id="orderScreen" hidden>
 <h1>飲食店発注</h1>
 <div class="age-warning">20歳未満の飲酒は法律で禁止されています。</div>
-<p class="lead">料飲店価格でご注文いただけます。商品名をタップすると詳細をご確認いただけます。カートに入れて「注文内容を確認する」を押してください。</p>
+<p class="lead">飲食店卸価格でご注文いただけます。商品名をタップすると詳細をご確認いただけます。カートに入れて「注文内容を確認する」を押してください。</p>
 <div id="paymentBadge"></div>
 <div id="paymentNote" hidden></div>
 <div id="itemsList"></div>
@@ -508,7 +508,7 @@ detailImage.src = (item.images && item.images.length ? item.images[0] : item.ima
 detailTitle.textContent = item.title;
 const hasDiscount = item.discountedPrice !== null && item.discountedPrice !== undefined && Number(item.discountedPrice) !== Number(item.price);
 detailPrice.innerHTML = hasDiscount
-? '<span class="price-original">' + yen(item.price) + '</span><span class="price-discounted">' + yen(item.discountedPrice) + '（料飲店価格）</span>'
+? '<span class="price-original">' + yen(item.price) + '</span><span class="price-discounted">' + yen(item.discountedPrice) + '（飲食店卸価格）</span>'
 : yen(item.price);
 detailDescription.textContent = item.description || '';
 detailOos.hidden = !isOutOfStock(item);
@@ -561,7 +561,7 @@ orig.className = 'price-original';
 orig.textContent = yen(item.price);
 const disc = document.createElement('span');
 disc.className = 'price-discounted';
-disc.textContent = yen(item.discountedPrice) + '（料飲店価格）';
+disc.textContent = yen(item.discountedPrice) + '（飲食店卸価格）';
 price.appendChild(orig);
 price.appendChild(disc);
 } else {
