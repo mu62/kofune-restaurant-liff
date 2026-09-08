@@ -803,13 +803,10 @@ applyBirthdateValue(savedBirthdate);
 }
 if (data.customer && data.customer.invoiceOk) {
 paymentBadge.innerHTML = '<span class="badge invoice">お支払い: 請求書（月末締め）</span>';
-paymentNote.hidden = false;
-paymentNote.innerHTML = '<span class="reco-bubble">🎉 オススメ！</span>' +
-'<div class="payment-note-text">💳 <strong>クレジットカード払い</strong>なら振込手数料が<span class="fee-zero">0円</span>！<br>切り替えをご希望の場合は、注文完了画面でご案内するリンクからお選びいただけます。</div>';
 } else {
 paymentBadge.innerHTML = '<span class="badge card">お支払い: カード決済</span>';
-paymentNote.hidden = true;
 }
+paymentNote.hidden = true;
 renderCatalog(catalogItems);
 
 statusEl.hidden = true;
