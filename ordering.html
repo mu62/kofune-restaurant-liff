@@ -47,18 +47,39 @@ margin-bottom: 12px;
 .badge.card { background: #e8f3ee; color: var(--accent-dark); }
 .badge.invoice { background: #eef1f6; color: #33445a; }
 #paymentNote {
-position: relative; font-size: 13px; line-height: 1.7; color: #7a3a00;
-background: #fff4e0; border: 1.5px solid #f0a839; border-radius: 12px;
-padding: 14px 14px 12px; margin: 4px 0 18px;
+position: relative; font-size: 13.5px; line-height: 1.7; color: #7a3a00;
+background: linear-gradient(#fff8ec, #fff1db); border: 2px solid #f0a839; border-radius: 14px;
+padding: 16px 14px 14px; margin: 4px 0 18px;
+box-shadow: 0 3px 10px rgba(240,168,57,0.25);
+}
+.payment-note-text strong { color: #b23c17; }
+.payment-note-text .fee-zero {
+display: inline-block; font-size: 15px; font-weight: 800; color: #fff;
+background: #ff6b35; padding: 1px 8px; border-radius: 6px; margin: 0 1px;
 }
 .reco-bubble {
 display: inline-block; background: #ff6b35; color: #fff;
-font-size: 12px; font-weight: 800; padding: 4px 12px; border-radius: 999px;
-margin-bottom: 8px; position: relative; box-shadow: 0 2px 4px rgba(255,107,53,0.35);
+font-size: 13px; font-weight: 800; padding: 5px 14px; border-radius: 999px;
+margin-bottom: 10px; position: relative; box-shadow: 0 3px 6px rgba(255,107,53,0.4);
+animation: reco-pulse 1.7s ease-in-out infinite;
 }
 .reco-bubble::after {
 content: ''; position: absolute; bottom: -6px; left: 16px;
 border-width: 6px 6px 0 0; border-style: solid; border-color: #ff6b35 transparent transparent transparent;
+}
+@keyframes reco-pulse {
+0%, 100% { transform: scale(1); }
+50% { transform: scale(1.07); }
+}
+.payment-callout {
+position: relative; font-size: 13.5px; line-height: 1.7; color: #7a3a00;
+background: linear-gradient(#fff8ec, #fff1db); border: 2px solid #f0a839; border-radius: 14px;
+padding: 16px 14px 14px; margin: 16px 0 0; text-align: left;
+box-shadow: 0 3px 10px rgba(240,168,57,0.25);
+}
+.payment-callout .fee-zero {
+display: inline-block; font-size: 15px; font-weight: 800; color: #fff;
+background: #ff6b35; padding: 1px 8px; border-radius: 6px; margin: 0 1px;
 }
 .age-warning {
 font-size: 12px; font-weight: 700; color: #b23c17; background: #fdecea;
@@ -283,6 +304,7 @@ button#confirmSubmitBtn:active:not(:disabled) { background: var(--accent-dark); 
 <div id="doneScreen">
 <div class="icon" id="doneIcon">✅</div>
 <p id="doneMessage"></p>
+<div id="cardRecoBox" class="payment-callout" hidden></div>
 <div id="cancelArea">
 <button type="button" data-action="cancel-start" class="cancel-link">この注文をキャンセルする</button>
 </div>
@@ -324,6 +346,7 @@ const noteInput = document.getElementById('noteInput');
 const errorMsg = document.getElementById('errorMsg');
 const doneScreen = document.getElementById('doneScreen');
 const doneMessage = document.getElementById('doneMessage');
+const cardRecoBox = document.getElementById('cardRecoBox');
 const doneIcon = document.getElementById('doneIcon');
 const cancelArea = document.getElementById('cancelArea');
 let lastDraftOrderId = null;
@@ -473,6 +496,7 @@ function renderCancelled() {
 cancelArea.innerHTML = '';
 doneIcon.textContent = '🚫';
 doneMessage.textContent = 'ご注文をキャンセルしました。';
+cardRecoBox.hidden = true;
 }
 
 cancelArea.addEventListener('click', async function (e) {
@@ -780,7 +804,8 @@ applyBirthdateValue(savedBirthdate);
 if (data.customer && data.customer.invoiceOk) {
 paymentBadge.innerHTML = '<span class="badge invoice">お支払い: 請求書（月末締め）</span>';
 paymentNote.hidden = false;
-paymentNote.textContent = '💳 クレジットカード払いなら振込手数料がかかりません。切り替えをご希望の場合は、注文完了画面でご案内するリンクからお選びいただけます。';
+paymentNote.innerHTML = '<span class="reco-bubble">🎉 オススメ！</span>' +
+'<div class="payment-note-text">💳 <strong>クレジットカード払い</strong>なら振込手数料が<span class="fee-zero">0円</span>！<br>切り替えをご希望の場合は、注文完了画面でご案内するリンクからお選びいただけます。</div>';
 } else {
 paymentBadge.innerHTML = '<span class="badge card">お支払い: カード決済</span>';
 paymentNote.hidden = true;
@@ -880,9 +905,15 @@ renderCancelDefault();
 cancelArea.innerHTML = '';
 }
 if (data.isInvoice) {
-doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '<br><br>お支払いは月末締めのご請求となります。請求書は追ってLINEでお送りします。' +
-(data.invoiceUrl ? '<br><br>💳 クレジットカード払いなら振込手数料がかかりません。今すぐお支払いを済ませたい場合はこちらからどうぞ。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">カードでお支払いに進む</a>' : '');
+doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '<br><br>お支払いは月末締めのご請求となります。請求書は追ってLINEでお送りします。';
+cardRecoBox.hidden = !data.invoiceUrl;
+if (data.invoiceUrl) {
+cardRecoBox.innerHTML = '<span class="reco-bubble">🎉 オススメ！</span>' +
+'<div class="payment-note-text">💳 <strong>クレジットカード払い</strong>なら振込手数料が<span class="fee-zero">0円</span>！<br>今すぐお支払いを済ませたい場合はこちらからどうぞ。</div>' +
+'<a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">カードでお支払いに進む</a>';
+}
 } else {
+cardRecoBox.hidden = true;
 doneMessage.innerHTML = 'ご注文（' + (data.orderName || '') + '）を受け付けました。合計 ' + yen(data.total) + '<br><br>下記よりお支払い（カード決済）をお願いいたします。<br><a class="pay-link" href="' + data.invoiceUrl + '" target="_blank" rel="noopener">お支払いに進む</a>';
 }
 doneScreen.style.display = 'block';
