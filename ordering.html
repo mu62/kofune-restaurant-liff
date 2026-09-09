@@ -858,7 +858,7 @@ paymentBadge.innerHTML = '<span class="badge card">お支払い: カード決済
 paymentNote.hidden = true;
  if (data.freeDelivery) {
   freeDeliveryBadge.hidden = false;
-  freeDeliveryBadge.textContent = '🚚 送料無料エリア対象（自社配送・' + (data.deliveryWindow || '') + '）';
+  freeDeliveryBadge.textContent = '🚚 送料無料エリア対象（次回配送枠：' + ((data.deliveryDateOptions && data.deliveryDateOptions[0]) ? (data.deliveryDateOptions[0].label + ' ') : '') + (data.deliveryWindow || '') + '）';
   availableDeliveryDates = data.deliveryDateOptions || [];
  } else {
   freeDeliveryBadge.hidden = true;
