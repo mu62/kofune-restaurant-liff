@@ -48,7 +48,7 @@
     font-weight: 600;
     margin-bottom: 6px;
   }
-  input[type="email"], input[type="text"], input[type="url"] {
+  input[type="email"], input[type="text"], input[type="url"], input[type="date"] {
     width: 100%;
     padding: 10px 12px;
     font-size: 15px;
@@ -77,6 +77,24 @@
     line-height: 1.6;
   }
   .agree-box .choice-row { border-bottom: none; align-items: flex-start; }
+  .birthdate-calendar-toggle {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 7px 12px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  input[type="date"] { margin-top: 8px; }
+  .age-error {
+    font-size: 12.5px;
+    color: var(--danger);
+    margin-top: 6px;
+    display: none;
+  }
   button#submitBtn {
     width: 100%;
     padding: 14px;
@@ -162,6 +180,15 @@
         </div>
       </div>
 
+      <div class="field">
+        <label class="field-label" for="birthdateTextInput">発注者様の生年月日 <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="birthdateTextInput" autocomplete="bday" placeholder="例：1990/01/15" maxlength="12">
+        <button type="button" id="birthdateCalendarToggle" class="birthdate-calendar-toggle">📅 カレンダーで選択</button>
+        <input type="date" id="birthdateInput" hidden>
+        <div class="hint">「1990/01/15」のように入力するか、「カレンダーで選択」からもお選びいただけます。ご登録いただくと、初回のご発注時から生年月日の入力が省略されます。</div>
+        <div id="ageError" class="age-error">20歳未満の方はご登録いただけません。</div>
+      </div>
+
       <div class="field agree-box">
         <label class="choice-row">
           <input type="checkbox" id="agree" name="agree" required>
@@ -203,6 +230,78 @@ const pendingScreen = document.getElementById('pendingScreen');
 const appForm = document.getElementById('appForm');
 const submitBtn = document.getElementById('submitBtn');
 const errorMsg = document.getElementById('errorMsg');
+const birthdateTextInput = document.getElementById('birthdateTextInput');
+  const birthdateInput = document.getElementById('birthdateInput');
+  const birthdateCalendarToggle = document.getElementById('birthdateCalendarToggle');
+  const ageError = document.getElementById('ageError');
+
+  (function setBirthdateMax() {
+      const today = new Date();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      birthdateInput.max = today.getFullYear() + '-' + mm + '-' + dd;
+  })();
+  function normalizeBirthdateInput(str) {
+      if (!str || typeof str !== 'string') return null;
+      let s = str.trim().replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+      let m = s.match(/^(\d{4})[\/\-.年](\d{1,2})[\/\-.月]?(\d{1,2})日?$/);
+      if (!m) m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+      if (!m) return null;
+      const y = m[1], mo = ('0' + parseInt(m[2], 10)).slice(-2), d = ('0' + parseInt(m[3], 10)).slice(-2);
+      if (mo === '00' || d === '00' || parseInt(mo, 10) > 12 || parseInt(d, 10) > 31) return null;
+      return y + '-' + mo + '-' + d;
+  }
+
+  function calculateAgeFromBirthdate(birthdateStr) {
+      const normalized = normalizeBirthdateInput(birthdateStr);
+      if (!normalized) return null;
+      const parts = normalized.split('-');
+      const y = parseInt(parts[0], 10), mo = parseInt(parts[1], 10), d = parseInt(parts[2], 10);
+      const birth = new Date(y, mo - 1, d);
+      if (birth.getFullYear() !== y || birth.getMonth() !== mo - 1 || birth.getDate() !== d) return null;
+      const today = new Date();
+      if (birth > today) return null;
+      let age = today.getFullYear() - birth.getFullYear();
+      const hadBirthdayThisYear = (today.getMonth() > birth.getMonth()) ||
+            (today.getMonth() === birth.getMonth() && today.getDate() >= birth.getDate());
+      if (!hadBirthdayThisYear) age--;
+      if (age < 0 || age > 130) return null;
+      return age;
+  }
+  function validateBirthdateField() {
+      const age = calculateAgeFromBirthdate(birthdateTextInput.value);
+      const invalid = age !== null && age < 20;
+      ageError.style.display = invalid ? 'block' : 'none';
+      return age;
+  }
+
+  birthdateTextInput.addEventListener('input', function () {
+      clearError();
+      validateBirthdateField();
+  });
+  birthdateTextInput.addEventListener('blur', function () {
+      const normalized = normalizeBirthdateInput(birthdateTextInput.value);
+      if (normalized) {
+            const p = normalized.split('-');
+            birthdateTextInput.value = p[0] + '/' + p[1] + '/' + p[2];
+            birthdateInput.value = normalized;
+      }
+  });
+  birthdateCalendarToggle.addEventListener('click', function () {
+      birthdateInput.hidden = !birthdateInput.hidden;
+      if (!birthdateInput.hidden && birthdateInput.showPicker) {
+            try { birthdateInput.showPicker(); } catch (e) {}
+      }
+  });
+  birthdateInput.addEventListener('change', function () {
+      if (birthdateInput.value) {
+            const p = birthdateInput.value.split('-');
+            birthdateTextInput.value = p[0] + '/' + p[1] + '/' + p[2];
+      }
+      clearError();
+      validateBirthdateField();
+  });
+  
 
 function showError(text) {
   errorMsg.textContent = text;
@@ -267,10 +366,25 @@ appForm.addEventListener('submit', async function (e) {
   const monthlyVolumeEl = appForm.querySelector('input[name="monthlyVolume"]:checked');
   const roles = Array.from(appForm.querySelectorAll('input[name="roles"]:checked')).map(function (el) { return el.value; });
   const agree = document.getElementById('agree').checked;
+  const birthdate = normalizeBirthdateInput(birthdateTextInput.value);
 
   if (!email || !shopUrl || !monthlyVolumeEl || roles.length === 0 || !agree) {
     showError('未入力の項目があります。ご確認ください。');
     return;
+  }
+
+  if (!birthdate) {
+    showError('生年月日を正しい形式で入力してください（例：1990/01/15）。');
+    return;
+  }
+
+  const age = calculateAgeFromBirthdate(birthdateTextInput.value);
+  if (age === null) {
+    showError('生年月日を正しく入力してください。');
+    return;
+  }
+  if (age < 20) {
+    return; // ageError already shown
   }
 
   submitBtn.disabled = true;
@@ -291,6 +405,7 @@ appForm.addEventListener('submit', async function (e) {
         roles: roles,
         shopUrl: shopUrl,
         monthlyVolume: monthlyVolumeEl.value,
+        birthdate: birthdate,
         agree: agree
       })
     });
