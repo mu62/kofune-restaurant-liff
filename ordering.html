@@ -46,6 +46,9 @@ margin-bottom: 12px;
 }
 .badge.card { background: #e8f3ee; color: var(--accent-dark); }
 .badge.invoice { background: #eef1f6; color: #33445a; }
+ .free-delivery-badge { display: inline-block; font-size: 12.5px; font-weight: 700; color: var(--accent-dark); background: #e8f3ee; border: 1px solid #b9ddc9; border-radius: 999px; padding: 6px 12px; margin: 0 0 12px; }
+ .delivery-date-select { font-size: 13px; font-weight: 700; color: var(--accent-dark); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; background: #fff; font-family: inherit; }
+ .delivery-window-note { font-size: 11.5px; color: var(--muted); margin: -6px 0 10px; text-align: right; }
 #paymentNote {
 position: relative; font-size: 13.5px; line-height: 1.7; color: #7a3a00;
 background: linear-gradient(#fff8ec, #fff1db); border: 2px solid #f0a839; border-radius: 14px;
@@ -261,6 +264,7 @@ button#confirmSubmitBtn:active:not(:disabled) { background: var(--accent-dark); 
 <div class="age-warning">20歳未満の飲酒は法律で禁止されています。</div>
 <p class="lead">飲食店卸価格でご注文いただけます。商品名をタップすると詳細をご確認いただけます。カートに入れて「注文内容を確認する」を押してください。</p>
 <div id="paymentBadge"></div>
+ <div id="freeDeliveryBadge" class="free-delivery-badge" hidden></div>
 <div id="paymentNote" hidden></div>
 <div id="itemsList"></div>
 <div class="note-field">
@@ -281,7 +285,8 @@ button#confirmSubmitBtn:active:not(:disabled) { background: var(--accent-dark); 
 <div class="confirm-row"><span>商品合計</span><span id="confirmSubtotal">¥0</span></div>
 <div class="confirm-row shipping-row"><span>送料</span><span id="confirmShipping" class="val loading">計算中...</span></div>
 <div id="confirmShippingFallback" class="shipping-fallback" hidden>送料は配送先住所をもとに自動計算されます。表示されない場合は確定後にご案内します。</div>
-  <div class="confirm-row delivery-row" id="confirmDeliveryRow" hidden><span>お届け予定</span><span id="confirmDeliveryValue"></span></div>
+  <div class="confirm-row delivery-row" id="confirmDeliveryRow" hidden><span>お届け予定日</span><select id="confirmDeliveryDateSelect" class="delivery-date-select"></select></div>
+ <div id="deliveryWindowNote" class="delivery-window-note" hidden></div>
 <div class="confirm-divider"></div>
 <div class="confirm-row total-row"><span>合計</span><span id="confirmTotal">¥0</span></div>
 </div>
@@ -372,7 +377,9 @@ const confirmSubtotal = document.getElementById('confirmSubtotal');
 const confirmShipping = document.getElementById('confirmShipping');
 const confirmShippingFallback = document.getElementById('confirmShippingFallback');
   const confirmDeliveryRow = document.getElementById('confirmDeliveryRow');
-  const confirmDeliveryValue = document.getElementById('confirmDeliveryValue');
+  const confirmDeliveryDateSelect = document.getElementById('confirmDeliveryDateSelect');
+ const deliveryWindowNote = document.getElementById('deliveryWindowNote');
+ const freeDeliveryBadge = document.getElementById('freeDeliveryBadge');
 const confirmTotal = document.getElementById('confirmTotal');
 const birthdateInput = document.getElementById('birthdateInput');
 const birthdateTextInput = document.getElementById('birthdateTextInput');
@@ -391,6 +398,8 @@ let savedBirthdate = null;
 let currentShippingFee = 0;
 let shippingEstimateToken = 0;
 let shippingDebounceTimer = null;
+ let availableDeliveryDates = [];
+ let selectedDeliveryDate = null;
 
 (function setBirthdateMax() {
 const today = new Date();
@@ -686,11 +695,13 @@ confirmShipping.classList.add('loading');
 confirmShippingFallback.hidden = true;
 }
 try {
-const data = await callBackend('estimate_restaurant_order', { items: items });
+const data = await callBackend('estimate_restaurant_order', { items: items, deliveryDate: selectedDeliveryDate });
 if (token !== shippingEstimateToken) return; // stale response, cart changed since
 if (data && data.ok) {
 currentShippingFee = Number(data.shippingFee) || 0;
-if (data.hasShippingAddress) {
+if (data.freeDelivery) {
+ cartShippingValue.textContent = '無料（自社配送）';
+} else if (data.hasShippingAddress) {
 cartShippingValue.textContent = yen(currentShippingFee);
 } else {
 cartShippingValue.textContent = '確定時に計算';
@@ -732,18 +743,37 @@ if (estimateData.freeDelivery) {
 }
   confirmShipping.classList.remove('loading');
   confirmShippingFallback.hidden = estimateData.hasShippingAddress || estimateData.freeDelivery;
-  if (estimateData.freeDelivery && estimateData.deliveryDateLabel) {
-    confirmDeliveryValue.textContent = estimateData.deliveryDateLabel + ' ' + (estimateData.deliveryWindow || '');
-    confirmDeliveryRow.hidden = false;
+  if (estimateData.freeDelivery && estimateData.deliveryDateOptions && estimateData.deliveryDateOptions.length) {
+   populateDeliveryDateSelect(estimateData.deliveryDateOptions, selectedDeliveryDate || estimateData.deliveryDate);
+   deliveryWindowNote.textContent = 'お届け時間帯：' + (estimateData.deliveryWindow || '');
+   deliveryWindowNote.hidden = false;
+   confirmDeliveryRow.hidden = false;
   } else {
-    confirmDeliveryRow.hidden = true; 
+   confirmDeliveryRow.hidden = true;
+   deliveryWindowNote.hidden = true;
   }
 } else {
-  confirmDeliveryRow.hidden = true;
-}
+ confirmDeliveryRow.hidden = true;
+ deliveryWindowNote.hidden = true;
+ 
   confirmTotal.textContent = yen(subtotal + shippingFee);
 }
-function renderConfirmItemsList() {
+function populateDeliveryDateSelect(options, selectedIso) {
+ availableDeliveryDates = options || [];
+ confirmDeliveryDateSelect.innerHTML = '';
+ availableDeliveryDates.forEach(function (opt) {
+  const optionEl = document.createElement('option');
+  optionEl.value = opt.isoDate;
+  optionEl.textContent = opt.label;
+  confirmDeliveryDateSelect.appendChild(optionEl);
+                                          });
+   const target = selectedIso && availableDeliveryDates.some(function (o) { return o.isoDate === selectedIso; })
+    ? selectedIso
+    : (availableDeliveryDates[0] ? availableDeliveryDates[0].isoDate : null);
+ confirmDeliveryDateSelect.value = target || '';
+ selectedDeliveryDate = target;
+}
+ function renderConfirmItemsList() {
 confirmItemsList.innerHTML = '';
 Object.keys(cart).forEach(function (variantId) {
 const item = catalogItems.find(function (i) { return i.variantId === variantId; });
@@ -773,6 +803,8 @@ confirmShipping.textContent = '計算中...';
 confirmShipping.classList.add('loading');
 confirmShippingFallback.hidden = true;
   confirmDeliveryRow.hidden = true;
+ deliveryWindowNote.hidden = true;
+ selectedDeliveryDate = null;
 confirmTotal.textContent = yen(cartSubtotal());
 if (!birthdateTextInput.value && savedBirthdate) {
 applyBirthdateValue(savedBirthdate);
@@ -823,6 +855,13 @@ paymentBadge.innerHTML = '<span class="badge invoice">お支払い: 請求書（
 paymentBadge.innerHTML = '<span class="badge card">お支払い: カード決済</span>';
 }
 paymentNote.hidden = true;
+ if (data.freeDelivery) {
+  freeDeliveryBadge.hidden = false;
+  freeDeliveryBadge.textContent = '🚚 送料無料エリア対象（自社配送・' + (data.deliveryWindow || '') + '）';
+  availableDeliveryDates = data.deliveryDateOptions || [];
+ } else {
+  freeDeliveryBadge.hidden = true;
+ }
 renderCatalog(catalogItems);
 
 statusEl.hidden = true;
@@ -842,7 +881,12 @@ if (!items.length) return;
 openConfirmScreen();
 });
 
-confirmBackBtn.addEventListener('click', function () {
+confirmDeliveryDateSelect.addEventListener('change', function () {
+ selectedDeliveryDate = confirmDeliveryDateSelect.value;
+ runShippingEstimate();
+});
+ 
+ confirmBackBtn.addEventListener('click', function () {
 closeConfirmScreen();
 });
 
@@ -904,7 +948,7 @@ confirmSubmitBtn.disabled = true;
 confirmSubmitBtn.textContent = '送信中...';
 
 try {
-const data = await callBackend('create_restaurant_order', { items: items, note: noteInput.value.trim(), birthdate: birthdate });
+const data = await callBackend('create_restaurant_order', { items: items, note: noteInput.value.trim(), birthdate: birthdate, deliveryDate: selectedDeliveryDate });
 if (data && data.ok) {
 savedBirthdate = birthdate;
 confirmScreen.hidden = true;
