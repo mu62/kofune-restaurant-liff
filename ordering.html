@@ -239,7 +239,7 @@ display:inline-block; margin-top:8px; padding:7px 12px; background:#fff; border:
 border-radius:8px; color:var(--muted); font-size:12.5px; cursor:pointer;
 }
 .birthdate-field .hint { font-size:11.5px; color: var(--muted); margin-top:4px; }
-.age-error { font-size:12.5px; color: var(--danger); margin-top:6px; display:none; }
+.age-error { font-size:12.5px; color: var(--danger); margin-top:6px; display:none; } .address-field { margin-bottom: 14px; } .address-field label { display:block; font-size:13px; font-weight:600; margin-bottom:6px; margin-top:10px; } .address-field label:first-child { margin-top:0; } .address-field input[type="text"], .address-field select { width:100%; padding:10px; font-size:15px; border:1px solid var(--border); border-radius:8px; font-family:inherit; background:#fff; } .address-field .hint { font-size:11.5px; color: var(--muted); margin-top:8px; } .address-saved-box { background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px 12px; font-size:12.5px; line-height:1.7; color: var(--fg); margin-bottom:14px; } .<div id="ageError" class="age-error">20歳未満のお客様はご注文いただけません。</div> { font-size:13px; } .address-field { margin-bottom: 14px; } .address-field label { display:block; font-size:13px; font-weight:600; margin-bottom:6px; margin-top:10px; } .address-field label:first-child { margin-top:0; } .address-field input[type="text"], .address-field select { width:100%; padding:10px; font-size:15px; border:1px solid var(--border); border-radius:8px; font-family:inherit; background:#fff; } .address-field .hint { font-size:11.5px; color: var(--muted); margin-top:8px; } .address-saved-box { background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px 12px; font-size:12.5px; line-height:1.7; color: var(--fg); margin-bottom:14px; } .address-saved-box strong { font-size:13px; }
 .confirm-back-btn { display:inline-block; margin-bottom:14px; padding:8px 12px; background:#fff; border:1px solid var(--border); border-radius:8px; color:var(--fg); font-size:14px; cursor:pointer; }
 #confirmErrorMsg { color: var(--danger); font-size: 13px; margin: 10px 0; display: none; text-align: center; white-space: pre-wrap; }
 button#confirmSubmitBtn {
@@ -298,7 +298,7 @@ button#confirmSubmitBtn:active:not(:disabled) { background: var(--accent-dark); 
 <div class="hint">「1990/01/15」のように入力するか、「カレンダーで選択」からもお選びいただけます。年齢確認のため、ご注文のたびにご確認をお願いしております。一度ご入力いただくと次回から自動入力されます。</div>
 <div id="ageError" class="age-error">20歳未満のお客様はご注文いただけません。</div>
 </div>
-<div id="confirmErrorMsg"></div>
+<div id="addressSavedBox" class="address-saved-box" hidden></div><div class="address-field" id="addressField"><label for="addressName">お届け先お名前</label><input type="text" id="addressName" autocomplete="name" placeholder="例：山田 太郎"><label for="addressZip">郵便番号</label><input type="text" id="addressZip" autocomplete="postal-code" placeholder="例：530-0001" maxlength="8"><label for="addressProvince">都道府県</label><select id="addressProvince"></select><label for="addressCity">市区町村</label><input type="text" id="addressCity" autocomplete="address-level2" placeholder="例：大阪市北区"><label for="addressLine1">番地・建物名</label><input type="text" id="addressLine1" autocomplete="address-line1" placeholder="例：本庄東1-2-3 ○○ビル101"><label for="addressPhone">電話番号</label><input type="text" id="addressPhone" autocomplete="tel" placeholder="例：090-1234-5678"><div class="hint">配送先のご住所です。一度ご登録いただくと次回のご注文から自動で入力されます。</div><div id="addressError" class="age-error"></div></div><div id="confirmErrorMsg"></div>
 <button type="button" id="confirmSubmitBtn" disabled>注文を確定する</button>
 </div>
 
@@ -384,7 +384,7 @@ const confirmTotal = document.getElementById('confirmTotal');
 const birthdateInput = document.getElementById('birthdateInput');
 const birthdateTextInput = document.getElementById('birthdateTextInput');
 const birthdateCalendarToggle = document.getElementById('birthdateCalendarToggle');
-const ageError = document.getElementById('ageError');
+const ageError = document.getElementById('ageError'); const addressField = document.getElementById('addressField'); const addressSavedBox = document.getElementById('addressSavedBox'); const addressName = document.getElementById('addressName'); const addressZip = document.getElementById('addressZip'); const addressProvince = document.getElementById('addressProvince'); const addressCity = document.getElementById('addressCity'); const addressLine1 = document.getElementById('addressLine1'); const addressPhone = document.getElementById('addressPhone'); const addressError = document.getElementById('addressError');
 const confirmErrorMsg = document.getElementById('confirmErrorMsg');
 const confirmSubmitBtn = document.getElementById('confirmSubmitBtn');
 const cartShippingLine = document.getElementById('cartShippingLine');
@@ -394,7 +394,7 @@ let idToken = null;
 let catalogItems = [];
 let cart = {};
 let submitting = false;
-let savedBirthdate = null;
+let savedBirthdate = null; let savedAddress = null; const PREFECTURES = [ ['JP-01','北海道'],['JP-02','青森県'],['JP-03','岩手県'],['JP-04','宮城県'],['JP-05','秋田県'], ['JP-06','山形県'],['JP-07','福島県'],['JP-08','茨城県'],['JP-09','栃木県'],['JP-10','群馬県'], ['JP-11','埼玉県'],['JP-12','千葉県'],['JP-13','東京都'],['JP-14','神奈川県'],['JP-15','新潟県'], ['JP-16','富山県'],['JP-17','石川県'],['JP-18','福井県'],['JP-19','山梨県'],['JP-20','長野県'], ['JP-21','岐阜県'],['JP-22','静岡県'],['JP-23','愛知県'],['JP-24','三重県'],['JP-25','滋賀県'], ['JP-26','京都府'],['JP-27','大阪府'],['JP-28','兵庫県'],['JP-29','奈良県'],['JP-30','和歌山県'], ['JP-31','鳥取県'],['JP-32','島根県'],['JP-33','岡山県'],['JP-34','広島県'],['JP-35','山口県'], ['JP-36','徳島県'],['JP-37','香川県'],['JP-38','愛媛県'],['JP-39','高知県'],['JP-40','福岡県'], ['JP-41','佐賀県'],['JP-42','長崎県'],['JP-43','熊本県'],['JP-44','大分県'],['JP-45','宮崎県'], ['JP-46','鹿児島県'],['JP-47','沖縄県'] ]; (function populatePrefectures() { const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '選択してください'; addressProvince.appendChild(placeholder); PREFECTURES.forEach(function (p) { const opt = document.createElement('option'); opt.value = p[0]; opt.textContent = p[1]; addressProvince.appendChild(opt); }); })(); function applySavedAddress(addr) { savedAddress = addr; if (addr) { addressField.hidden = true; const pref = PREFECTURES.find(function (p) { return p[0] === addr.provinceCode; }); const prefLabel = addr.province || (pref ? pref[1] : ''); addressSavedBox.innerHTML = '<strong>配送先</strong><br>' + [addr.lastName, addr.firstName].filter(Boolean).join(' ') + ' 様<br>' + '〒' + (addr.zip || '') + ' ' + prefLabel + (addr.city || '') + (addr.address1 || '') + (addr.address2 ? (' ' + addr.address2) : '') + '<br>' + 'TEL: ' + (addr.phone || '') + '<br>' + '<span style="color:var(--muted)">住所の変更をご希望の場合はLINEでご連絡ください。</span>'; addressSavedBox.hidden = false; } else { addressField.hidden = false; addressSavedBox.hidden = true; } } function gatherAddressPayload() { if (savedAddress) return null; const opt = addressProvince.options[addressProvince.selectedIndex]; return { lastName: addressName.value.trim(), firstName: '', zip: addressZip.value.trim(), province: opt ? opt.textContent : '', provinceCode: addressProvince.value, city: addressCity.value.trim(), address1: addressLine1.value.trim(), address2: '', phone: addressPhone.value.trim() }; } function validateAddressFields() { if (savedAddress) { addressError.style.display = 'none'; return true; } const a = gatherAddressPayload(); const missing = !a.lastName || !a.zip || !a.provinceCode || !a.city || !a.address1 || !a.phone; if (missing) { addressError.style.display = 'none'; return false; } addressError.style.display = 'none'; return true; }
 let currentShippingFee = 0;
 let shippingEstimateToken = 0;
 let shippingDebounceTimer = null;
@@ -466,7 +466,7 @@ function validateBirthdateField() {
 const age = calculateAgeFromBirthdate(birthdateTextInput.value);
 const invalid = age !== null && age < 20;
 ageError.style.display = invalid ? 'block' : 'none';
-confirmSubmitBtn.disabled = submitting || invalid || !birthdateTextInput.value;
+const addressOk = validateAddressFields(); confirmSubmitBtn.disabled = submitting || invalid || !birthdateTextInput.value || !addressOk;
 return age;
 }
 function showConfirmError(text) {
@@ -850,7 +850,7 @@ if (data.customer && data.customer.savedBirthdate) {
 savedBirthdate = data.customer.savedBirthdate;
 applyBirthdateValue(savedBirthdate);
 }
-if (data.customer && data.customer.invoiceOk) {
+applySavedAddress((data.customer && data.customer.savedAddress) || null); if (data.customer && data.customer.invoiceOk) {
 paymentBadge.innerHTML = '<span class="badge invoice">お支払い: 請求書（月末締め）</span>';
 } else {
 paymentBadge.innerHTML = '<span class="badge card">お支払い: カード決済</span>';
@@ -918,7 +918,7 @@ clearConfirmError();
 validateBirthdateField();
 });
 
-confirmSubmitBtn.addEventListener('click', async function () {
+[addressName, addressZip, addressCity, addressLine1, addressPhone].forEach(function (el) { el.addEventListener('input', function () { clearConfirmError(); validateBirthdateField(); }); }); addressProvince.addEventListener('change', function () { clearConfirmError(); validateBirthdateField(); }); confirmSubmitBtn.addEventListener('click', async function () {
 if (submitting) return;
 clearConfirmError();
 const items = cartItemsPayload();
@@ -944,14 +944,14 @@ if (age < 20) {
 return; // ageError already shown, button already disabled
 }
 
-submitting = true;
+const addressPayload = gatherAddressPayload(); if (!savedAddress && !validateAddressFields()) { showConfirmError('お届け先のお名前・ご住所をすべてご入力ください。'); return; } submitting = true;
 confirmSubmitBtn.disabled = true;
 confirmSubmitBtn.textContent = '送信中...';
 
 try {
-const data = await callBackend('create_restaurant_order', { items: items, note: noteInput.value.trim(), birthdate: birthdate, deliveryDate: selectedDeliveryDate });
+const data = await callBackend('create_restaurant_order', { items: items, note: noteInput.value.trim(), birthdate: birthdate, deliveryDate: selectedDeliveryDate, address: addressPayload });
 if (data && data.ok) {
-savedBirthdate = birthdate;
+savedBirthdate = birthdate; if (!savedAddress && addressPayload) { applySavedAddress(addressPayload); }
 confirmScreen.hidden = true;
 orderScreen.hidden = true;
 cartBar.style.display = 'none';
