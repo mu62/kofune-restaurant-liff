@@ -726,7 +726,7 @@ confirmSubtotal.textContent = yen(subtotal);
 const shippingFee = (estimateData && estimateData.ok && estimateData.hasShippingAddress) ? Number(estimateData.shippingFee) || 0 : 0;
 if (estimateData && estimateData.ok) {
 if (estimateData.freeDelivery) {
-  confirmShipping.textContent = '無料（自社配送';
+  confirmShipping.textContent = '無料（自社配送）';
   } else {
   confirmShipping.textContent = estimateData.hasShippingAddress ? yen(shippingFee) : '確定時に計算';
 }
