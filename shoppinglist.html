@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>買い物リスト</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 16px 80px;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: #faf8f4; color: #2a2420;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.lead { font-size: 13px; color: #6b6259; margin: 0 0 16px; line-height: 1.5; }
+  #loading, #error { padding: 40px 0; text-align: center; color: #6b6259; font-size: 14px; }
+  #error { color: #b3432b; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab-btn {
+    flex: 1; padding: 10px; font-size: 13px; font-weight: bold; text-align: center;
+    border: 1px solid #d8d1c6; border-radius: 8px; background: #fff; color: #6b6259; cursor: pointer;
+  }
+  .tab-btn.active { background: #1a3a2e; color: #fff; border-color: #1a3a2e; }
+
+  .add-box { display: flex; gap: 8px; margin-bottom: 16px; }
+  .add-box input {
+    flex: 1; padding: 10px; font-size: 15px; border: 1px solid #d8d1c6; border-radius: 8px; background: #fff;
+  }
+  .add-box button {
+    padding: 10px 16px; font-size: 14px; font-weight: bold; border: none; border-radius: 8px;
+    background: #1a3a2e; color: #fff; white-space: nowrap;
+  }
+  .add-box button:disabled { background: #b7c2bc; }
+
+  #empty { padding: 32px 0; text-align: center; color: #a39a8d; font-size: 13.5px; }
+
+  .item-card {
+    background: #fff; border: 1px solid #e6ded1; border-radius: 10px; padding: 12px; margin-bottom: 10px;
+  }
+  .item-card.done .item-text { text-decoration: line-through; color: #a39a8d; }
+  .item-row { display: flex; align-items: flex-start; gap: 10px; }
+  .item-row input[type="checkbox"] { width: 20px; height: 20px; margin-top: 2px; flex-shrink: 0; }
+  .item-main { flex: 1; min-width: 0; }
+  .item-text { font-size: 15.5px; font-weight: bold; word-break: break-word; }
+  .item-meta { font-size: 11.5px; color: #a39a8d; margin-top: 2px; }
+  .item-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .icon-btn {
+    border: none; background: none; padding: 4px 6px; font-size: 16px; cursor: pointer; color: #a39a8d;
+    line-height: 1;
+  }
+  .icon-btn.restore-btn { font-size: 13px; font-weight: bold; color: #1a3a2e; border: 1px solid #1a3a2e; border-radius: 6px; padding: 6px 10px; }
+
+  .comments { margin-top: 10px; padding-top: 10px; border-top: 1px solid #f0ebe0; }
+  .comment-line { font-size: 12.5px; color: #4a4239; margin-bottom: 4px; line-height: 1.4; }
+  .comment-line .author { font-weight: bold; color: #2a2420; }
+  .comment-add { display: flex; gap: 6px; margin-top: 6px; }
+  .comment-add input {
+    flex: 1; padding: 7px 8px; font-size: 12.5px; border: 1px solid #d8d1c6; border-radius: 6px; background: #fdfcfa;
+  }
+  .comment-add button {
+    padding: 7px 10px; font-size: 12px; border: none; border-radius: 6px; background: #ece6d9; color: #4a4239;
+  }
+  .comment-toggle { font-size: 12px; color: #6b6259; margin-top: 8px; background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>🛒 買い物リスト</h1>
+<p class="lead">メンバー全員で共有できる買い物リストです。追加・完了・コメント・削除ができます。</p>
+
+<div id="loading">読み込み中...</div>
+<div id="error" hidden></div>
+
+<div id="app" hidden>
+  <div class="tabs">
+    <button class="tab-btn active" id="tabActive" type="button">買い物リスト</button>
+    <button class="tab-btn" id="tabArchived" type="button">削除済み</button>
+  </div>
+
+  <div class="add-box" id="addBox">
+    <input id="newItemText" type="text" placeholder="品名を入力（例：卵、牛乳）" maxlength="200">
+    <button id="addBtn" type="button">追加</button>
+  </div>
+
+  <div id="listArea"></div>
+  <div id="empty" hidden></div>
+</div>
+
+<script>
+var LIFF_ID = '2011570621-8kfLQoey';
+var WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
+
+var idToken = null;
+var groupId = null;
+var currentView = 'active'; // 'active' | 'archived'
+var openComments = {}; // itemId -> true if comment box expanded
+
+function showError(msg) {
+  document.getElementById('loading').hidden = true;
+  var el = document.getElementById('error');
+  el.hidden = false;
+  el.textContent = msg;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  var mm = d.getMonth() + 1, dd = d.getDate();
+  var hh = ('0' + d.getHours()).slice(-2), mi = ('0' + d.getMinutes()).slice(-2);
+  return mm + '/' + dd + ' ' + hh + ':' + mi;
+}
+
+function callApi(body) {
+  body.idToken = idToken;
+  if (groupId) body.groupId = groupId;
+  return fetch(WEBAPP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(body)
+  })
+    .then(function (res) { return res.json(); })
+    .then(function (json) {
+      if (!json.ok) { throw new Error(json.error || '処理に失敗しました'); }
+      return json;
+    });
+}
+
+function switchTab(view) {
+  currentView = view;
+  document.getElementById('tabActive').classList.toggle('active', view === 'active');
+  document.getElementById('tabArchived').classList.toggle('active', view === 'archived');
+  document.getElementById('addBox').hidden = (view === 'archived');
+  loadList();
+}
+
+function loadList() {
+  var action = currentView === 'archived' ? 'shopping_list_get_archived' : 'shopping_list_get';
+  callApi({ action: action })
+    .then(function (json) { renderList(json.items); })
+    .catch(function (err) { alert('読み込みに失敗しました: ' + err.message); });
+}
+
+function renderList(items) {
+  var listArea = document.getElementById('listArea');
+  var emptyEl = document.getElementById('empty');
+  listArea.innerHTML = '';
+
+  if (!items || items.length === 0) {
+    emptyEl.hidden = false;
+    emptyEl.textContent = currentView === 'archived' ? '削除済みのアイテムはありません。' : '買い物リストは空です。上の欄から追加してください。';
+    return;
+  }
+  emptyEl.hidden = true;
+
+  items.forEach(function (it) {
+    var card = document.createElement('div');
+    card.className = 'item-card' + (it.status === 'done' ? ' done' : '');
+
+    var metaLine = '追加: ' + esc(it.addedBy) + '（' + fmtDateTime(it.addedAt) + '）';
+    if (it.status === 'done' && it.completedBy) {
+      metaLine += ' / 完了: ' + esc(it.completedBy) + '（' + fmtDateTime(it.completedAt) + '）';
+    }
+    if (it.status === 'archived' && it.archivedBy) {
+      metaLine += ' / 削除: ' + esc(it.archivedBy) + '（' + fmtDateTime(it.archivedAt) + '）';
+    }
+
+    var actionsHtml = '';
+    if (currentView === 'archived') {
+      actionsHtml = '<div class="item-actions"><button class="icon-btn restore-btn" data-action="restore" data-id="' + esc(it.id) + '">復元</button></div>';
+    } else {
+      actionsHtml = '<div class="item-actions"><button class="icon-btn" data-action="archive" data-id="' + esc(it.id) + '" title="削除">🗑</button></div>';
+    }
+
+    var checkboxHtml = currentView === 'archived'
+      ? ''
+      : '<input type="checkbox" data-action="toggle" data-id="' + esc(it.id) + '" ' + (it.status === 'done' ? 'checked' : '') + '>';
+
+    var commentsCount = (it.comments || []).length;
+    var commentsHtml = '<div class="comments" hidden data-comments-for="' + esc(it.id) + '">';
+    (it.comments || []).forEach(function (c) {
+      commentsHtml += '<div class="comment-line"><span class="author">' + esc(c.author) + '</span>：' + esc(c.text) +
+        '　<span style="color:#a39a8d;">(' + fmtDateTime(c.createdAt) + ')</span></div>';
+    });
+    if (currentView !== 'archived') {
+      commentsHtml += '<div class="comment-add">' +
+        '<input type="text" placeholder="コメントを入力" maxlength="300" data-comment-input="' + esc(it.id) + '">' +
+        '<button data-action="comment" data-id="' + esc(it.id) + '">送信</button>' +
+        '</div>';
+    }
+    commentsHtml += '</div>';
+
+    card.innerHTML =
+      '<div class="item-row">' +
+        checkboxHtml +
+        '<div class="item-main">' +
+          '<div class="item-text">' + esc(it.text) + '</div>' +
+          '<div class="item-meta">' + metaLine + '</div>' +
+          '<button class="comment-toggle" data-action="toggle-comments" data-id="' + esc(it.id) + '">💬 コメント' + (commentsCount ? '（' + commentsCount + '）' : '') + '</button>' +
+        '</div>' +
+        actionsHtml +
+      '</div>' +
+      commentsHtml;
+
+    listArea.appendChild(card);
+  });
+}
+
+function handleListAreaClick(e) {
+  var target = e.target;
+  var action = target.getAttribute('data-action');
+  if (!action) return;
+  var id = target.getAttribute('data-id');
+
+  if (action === 'toggle') {
+    var apiAction = target.checked ? 'shopping_list_complete' : 'shopping_list_uncomplete';
+    target.disabled = true;
+    callApi({ action: apiAction, itemId: id })
+      .then(function (json) { renderList(json.items); })
+      .catch(function (err) { alert('更新に失敗しました: ' + err.message); target.disabled = false; loadList(); });
+    return;
+  }
+
+  if (action === 'archive') {
+    if (!confirm('このアイテムを削除しますか？（削除済みリストから復元できます）')) return;
+    callApi({ action: 'shopping_list_archive', itemId: id })
+      .then(function (json) { renderList(json.items); })
+      .catch(function (err) { alert('削除に失敗しました: ' + err.message); });
+    return;
+  }
+
+  if (action === 'restore') {
+    callApi({ action: 'shopping_list_restore', itemId: id })
+      .then(function (json) { renderList(json.items); })
+      .catch(function (err) { alert('復元に失敗しました: ' + err.message); });
+    return;
+  }
+
+  if (action === 'toggle-comments') {
+    var box = document.querySelector('[data-comments-for="' + cssEscape(id) + '"]');
+    if (box) box.hidden = !box.hidden;
+    return;
+  }
+
+  if (action === 'comment') {
+    var input = document.querySelector('[data-comment-input="' + cssEscape(id) + '"]');
+    var text = input ? input.value.trim() : '';
+    if (!text) { alert('コメント内容を入力してください'); return; }
+    target.disabled = true;
+    callApi({ action: 'shopping_list_comment', itemId: id, comment: text })
+      .then(function (json) {
+        renderList(json.items);
+        var box = document.querySelector('[data-comments-for="' + cssEscape(id) + '"]');
+        if (box) box.hidden = false;
+      })
+      .catch(function (err) { alert('コメント送信に失敗しました: ' + err.message); target.disabled = false; });
+    return;
+  }
+}
+
+function cssEscape(s) {
+  return String(s).replace(/["\\]/g, '\\$&');
+}
+
+function handleAdd() {
+  var input = document.getElementById('newItemText');
+  var text = input.value.trim();
+  if (!text) { alert('品名を入力してください'); return; }
+  var btn = document.getElementById('addBtn');
+  btn.disabled = true;
+  callApi({ action: 'shopping_list_add', text: text })
+    .then(function (json) {
+      input.value = '';
+      btn.disabled = false;
+      renderList(json.items);
+    })
+    .catch(function (err) { alert('追加に失敗しました: ' + err.message); btn.disabled = false; });
+}
+
+document.getElementById('tabActive').addEventListener('click', function () { switchTab('active'); });
+document.getElementById('tabArchived').addEventListener('click', function () { switchTab('archived'); });
+document.getElementById('addBtn').addEventListener('click', handleAdd);
+document.getElementById('newItemText').addEventListener('keydown', function (e) { if (e.key === 'Enter') handleAdd(); });
+document.getElementById('listArea').addEventListener('click', handleListAreaClick);
+document.getElementById('listArea').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target && e.target.hasAttribute('data-comment-input')) {
+    var id = e.target.getAttribute('data-comment-input');
+    var btn = document.querySelector('[data-action="comment"][data-id="' + cssEscape(id) + '"]');
+    if (btn) btn.click();
+  }
+});
+
+liff.init({ liffId: LIFF_ID }).then(function () {
+  if (!liff.isLoggedIn()) {
+    liff.login();
+    return;
+  }
+  idToken = liff.getIDToken();
+  if (!idToken) {
+    showError('ログイン情報を取得できませんでした。時間をおいて再度お試しください。');
+    return;
+  }
+  try {
+    var ctx = liff.getContext();
+    if (ctx && ctx.groupId) groupId = ctx.groupId;
+  } catch (e) { /* ignore */ }
+
+  document.getElementById('loading').hidden = true;
+  document.getElementById('app').hidden = false;
+  loadList();
+}).catch(function (err) {
+  showError('LIFFの初期化に失敗しました: ' + err.message);
+});
+</script>
+</body>
+</html>
