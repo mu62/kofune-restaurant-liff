@@ -115,6 +115,7 @@ var WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXc
 
 var idToken = null;
 var groupId = null;
+var myDisplayName = ''; // used only for optimistic (instant) UI before the server confirms
 var currentView = 'active'; // 'active' | 'archived'
 var openComments = {}; // itemId -> true if comment box expanded
 var listRequestSeq = 0; // guards against out-of-order responses when switching tabs quickly
@@ -272,26 +273,46 @@ function handleListAreaClick(e) {
   var id = target.getAttribute('data-id');
 
   if (action === 'toggle') {
-    var apiAction = target.checked ? 'shopping_list_complete' : 'shopping_list_uncomplete';
+    var checked = target.checked;
+    var apiAction = checked ? 'shopping_list_complete' : 'shopping_list_uncomplete';
+    var card = target.closest('.item-card');
+    // Optimistic UI: show the strikethrough immediately, don't wait for the round trip.
+    if (card) card.classList.toggle('done', checked);
     target.disabled = true;
     callApi({ action: apiAction, itemId: id })
       .then(function (json) { renderList(json.items); })
-      .catch(function (err) { alert('更新に失敗しました: ' + err.message); target.disabled = false; loadList(); });
+      .catch(function (err) {
+        alert('更新に失敗しました: ' + err.message);
+        target.checked = !checked;
+        if (card) card.classList.toggle('done', !checked);
+        target.disabled = false;
+      });
     return;
   }
 
   if (action === 'archive') {
     if (!confirm('このアイテムを削除しますか？（削除済みリストから復元できます）')) return;
+    var archiveCard = target.closest('.item-card');
+    // Optimistic UI: fade it out right away instead of waiting for the server.
+    if (archiveCard) { archiveCard.style.opacity = '0.35'; archiveCard.style.pointerEvents = 'none'; }
     callApi({ action: 'shopping_list_archive', itemId: id })
       .then(function (json) { renderList(json.items); })
-      .catch(function (err) { alert('削除に失敗しました: ' + err.message); });
+      .catch(function (err) {
+        alert('削除に失敗しました: ' + err.message);
+        if (archiveCard) { archiveCard.style.opacity = ''; archiveCard.style.pointerEvents = ''; }
+      });
     return;
   }
 
   if (action === 'restore') {
+    var restoreCard = target.closest('.item-card');
+    if (restoreCard) { restoreCard.style.opacity = '0.35'; restoreCard.style.pointerEvents = 'none'; }
     callApi({ action: 'shopping_list_restore', itemId: id })
       .then(function (json) { renderList(json.items); })
-      .catch(function (err) { alert('復元に失敗しました: ' + err.message); });
+      .catch(function (err) {
+        alert('復元に失敗しました: ' + err.message);
+        if (restoreCard) { restoreCard.style.opacity = ''; restoreCard.style.pointerEvents = ''; }
+      });
     return;
   }
 
@@ -306,13 +327,32 @@ function handleListAreaClick(e) {
     var text = input ? input.value.trim() : '';
     if (!text) { alert('コメント内容を入力してください'); return; }
     target.disabled = true;
+
+    // Optimistic UI: show the comment immediately (grayed out) instead of waiting for the round trip.
+    var commentBox = document.querySelector('[data-comments-for="' + cssEscape(id) + '"]');
+    var optimisticLine = null;
+    if (commentBox) {
+      optimisticLine = document.createElement('div');
+      optimisticLine.className = 'comment-line';
+      optimisticLine.style.opacity = '0.5';
+      optimisticLine.innerHTML = '<span class="author">' + esc(myDisplayName || '自分') + '</span>：' + esc(text);
+      commentBox.insertBefore(optimisticLine, commentBox.querySelector('.comment-add'));
+      commentBox.hidden = false;
+    }
+    if (input) input.value = '';
+
     callApi({ action: 'shopping_list_comment', itemId: id, comment: text })
       .then(function (json) {
         renderList(json.items);
-        var box = document.querySelector('[data-comments-for="' + cssEscape(id) + '"]');
-        if (box) box.hidden = false;
+        var reopened = document.querySelector('[data-comments-for="' + cssEscape(id) + '"]');
+        if (reopened) reopened.hidden = false;
       })
-      .catch(function (err) { alert('コメント送信に失敗しました: ' + err.message); target.disabled = false; });
+      .catch(function (err) {
+        alert('コメント送信に失敗しました: ' + err.message);
+        target.disabled = false;
+        if (input) input.value = text;
+        if (optimisticLine) optimisticLine.remove();
+      });
     return;
   }
 }
@@ -365,6 +405,10 @@ liff.init({ liffId: LIFF_ID }).then(function () {
   try {
     var ctx = liff.getContext();
     if (ctx && ctx.groupId) groupId = ctx.groupId;
+  } catch (e) { /* ignore */ }
+  try {
+    var decoded = liff.getDecodedIDToken();
+    if (decoded && decoded.name) myDisplayName = decoded.name;
   } catch (e) { /* ignore */ }
 
   document.getElementById('loading').hidden = true;
