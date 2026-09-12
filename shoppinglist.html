@@ -117,8 +117,19 @@ var idToken = null;
 var groupId = null;
 var myDisplayName = ''; // used only for optimistic (instant) UI before the server confirms
 var currentView = 'active'; // 'active' | 'archived'
-var openComments = {}; // itemId -> true if comment box expanded
+var openComments = {}; // itemId -> true if comment box expanded (kept across re-renders)
 var listRequestSeq = 0; // guards against out-of-order responses when switching tabs quickly
+var currentItems = []; // the items currently rendered for currentView (our local "known truth")
+var itemsCache = { active: null, archived: null }; // last-fetched list per tab, for instant tab switching
+
+function nowIso() { return new Date().toISOString(); }
+
+function findItemIndexById(id) {
+  for (var i = 0; i < currentItems.length; i++) {
+    if (currentItems[i].id === id) return i;
+  }
+  return -1;
+}
 
 function showError(msg) {
   document.getElementById('loading').hidden = true;
@@ -207,32 +218,47 @@ function switchTab(view) {
 
 function loadList() {
   var seq = ++listRequestSeq;
+  var viewAtRequest = currentView;
   var listArea = document.getElementById('listArea');
   var emptyEl = document.getElementById('empty');
   var loadingEl = document.getElementById('listLoading');
 
-  setTabsDisabled(true);
-  listArea.classList.add('is-loading');
-  emptyEl.hidden = true;
-  // Only show the big "loading" placeholder if the list is currently empty,
-  // so switching tabs when there's already content feels instant (dimmed) rather than blank.
-  if (!listArea.children.length) loadingEl.hidden = false;
+  var cached = itemsCache[viewAtRequest];
+  if (cached) {
+    // Stale-while-revalidate: we've shown this tab before, so paint it instantly
+    // from the cached data and refresh from the server quietly in the background.
+    currentItems = cached;
+    renderList(currentItems);
+    loadingEl.hidden = true;
+    listArea.classList.remove('is-loading');
+  } else {
+    // First time loading this tab — nothing to show yet, so use the loading state.
+    setTabsDisabled(true);
+    listArea.classList.add('is-loading');
+    emptyEl.hidden = true;
+    if (!listArea.children.length) loadingEl.hidden = false;
+  }
 
-  var action = currentView === 'archived' ? 'shopping_list_get_archived' : 'shopping_list_get';
+  var action = viewAtRequest === 'archived' ? 'shopping_list_get_archived' : 'shopping_list_get';
   callApi({ action: action })
     .then(function (json) {
       if (seq !== listRequestSeq) return; // a newer request already superseded this one
+      itemsCache[viewAtRequest] = json.items;
       loadingEl.hidden = true;
       listArea.classList.remove('is-loading');
       setTabsDisabled(false);
-      renderList(json.items);
+      if (viewAtRequest === currentView) {
+        currentItems = json.items;
+        renderList(currentItems);
+      }
     })
     .catch(function (err) {
       if (seq !== listRequestSeq) return;
       loadingEl.hidden = true;
       listArea.classList.remove('is-loading');
       setTabsDisabled(false);
-      alert('読み込みに失敗しました: ' + err.message);
+      // If we already had cached data showing, fail silently — the user still sees a good list.
+      if (!cached) alert('読み込みに失敗しました: ' + err.message);
     });
 }
 
@@ -272,7 +298,7 @@ function renderList(items) {
       : '<input type="checkbox" data-action="toggle" data-id="' + esc(it.id) + '" ' + (it.status === 'done' ? 'checked' : '') + '>';
 
     var commentsCount = (it.comments || []).length;
-    var commentsHtml = '<div class="comments" hidden data-comments-for="' + esc(it.id) + '">';
+    var commentsHtml = '<div class="comments"' + (openComments[it.id] ? '' : ' hidden') + ' data-comments-for="' + esc(it.id) + '">';
     (it.comments || []).forEach(function (c) {
       commentsHtml += '<div class="comment-line"><span class="author">' + esc(c.author) + '</span>：' + esc(c.text) +
         '　<span style="color:#a39a8d;">(' + fmtDateTime(c.createdAt) + ')</span></div>';
@@ -310,12 +336,35 @@ function handleListAreaClick(e) {
   if (action === 'toggle') {
     var checked = target.checked;
     var apiAction = checked ? 'shopping_list_complete' : 'shopping_list_uncomplete';
-    var card = target.closest('.item-card');
-    // Optimistic UI: show the strikethrough immediately, don't wait for the round trip.
-    if (card) card.classList.toggle('done', checked);
-    target.disabled = true;
+    var idx = findItemIndexById(id);
+    var previous = idx !== -1 ? currentItems[idx] : null;
+
+    if (idx !== -1) {
+      // Optimistic UI: patch the FULL item locally (not just a CSS class) so the
+      // "完了: 名前（日時）" meta line appears/disappears instantly too, instead of
+      // lagging a few seconds behind the checkbox — this was the main cause of
+      // "unchecking feels slow" even though checking felt fast.
+      var patched = Object.assign({}, currentItems[idx]);
+      if (checked) {
+        patched.status = 'done';
+        patched.completedBy = myDisplayName || patched.completedBy || '';
+        patched.completedAt = nowIso();
+      } else {
+        patched.status = 'active';
+        patched.completedBy = '';
+        patched.completedAt = '';
+      }
+      currentItems[idx] = patched;
+      itemsCache[currentView] = currentItems;
+      renderList(currentItems);
+    }
+
     callApi({ action: apiAction, itemId: id })
-      .then(function (json) { renderList(json.items); })
+      .then(function (json) {
+        currentItems = json.items;
+        itemsCache[currentView] = currentItems;
+        renderList(currentItems);
+      })
       .catch(function (err) {
         if (err.invalidResponse) {
           // The update most likely went through on the server; just refresh to confirm.
@@ -323,50 +372,80 @@ function handleListAreaClick(e) {
           return;
         }
         alert('更新に失敗しました: ' + err.message);
-        target.checked = !checked;
-        if (card) card.classList.toggle('done', !checked);
-        target.disabled = false;
+        if (idx !== -1 && previous) {
+          currentItems[idx] = previous;
+          itemsCache[currentView] = currentItems;
+          renderList(currentItems);
+        }
       });
     return;
   }
 
   if (action === 'archive') {
     if (!confirm('このアイテムを削除しますか？（削除済みリストから復元できます）')) return;
-    var archiveCard = target.closest('.item-card');
-    // Optimistic UI: fade it out right away instead of waiting for the server.
-    if (archiveCard) { archiveCard.style.opacity = '0.35'; archiveCard.style.pointerEvents = 'none'; }
+    var archIdx = findItemIndexById(id);
+    if (archIdx === -1) return;
+    var archPrevious = currentItems[archIdx];
+    // Optimistic UI: remove it from the active list immediately — this is exactly
+    // what the server will report back (shopping_list_get excludes archived items).
+    currentItems = currentItems.filter(function (it) { return it.id !== id; });
+    itemsCache[currentView] = currentItems;
+    itemsCache.archived = null; // the archived tab now has a new item; force a fresh fetch there
+    renderList(currentItems);
+
     callApi({ action: 'shopping_list_archive', itemId: id })
-      .then(function (json) { renderList(json.items); })
+      .then(function (json) {
+        currentItems = json.items;
+        itemsCache[currentView] = currentItems;
+        renderList(currentItems);
+      })
       .catch(function (err) {
         if (err.invalidResponse) {
           loadList();
           return;
         }
         alert('削除に失敗しました: ' + err.message);
-        if (archiveCard) { archiveCard.style.opacity = ''; archiveCard.style.pointerEvents = ''; }
+        // Put it back where it was.
+        currentItems.splice(archIdx, 0, archPrevious);
+        itemsCache[currentView] = currentItems;
+        renderList(currentItems);
       });
     return;
   }
 
   if (action === 'restore') {
-    var restoreCard = target.closest('.item-card');
-    if (restoreCard) { restoreCard.style.opacity = '0.35'; restoreCard.style.pointerEvents = 'none'; }
+    var restIdx = findItemIndexById(id);
+    if (restIdx === -1) return;
+    var restPrevious = currentItems[restIdx];
+    // Optimistic UI: remove it from the archived list immediately.
+    currentItems = currentItems.filter(function (it) { return it.id !== id; });
+    itemsCache[currentView] = currentItems;
+    itemsCache.active = null; // the active tab now has a new item; force a fresh fetch there
+    renderList(currentItems);
+
     callApi({ action: 'shopping_list_restore', itemId: id })
-      .then(function (json) { renderList(json.items); })
+      .then(function (json) {
+        currentItems = json.items;
+        itemsCache[currentView] = currentItems;
+        renderList(currentItems);
+      })
       .catch(function (err) {
         if (err.invalidResponse) {
           loadList();
           return;
         }
         alert('復元に失敗しました: ' + err.message);
-        if (restoreCard) { restoreCard.style.opacity = ''; restoreCard.style.pointerEvents = ''; }
+        currentItems.splice(restIdx, 0, restPrevious);
+        itemsCache[currentView] = currentItems;
+        renderList(currentItems);
       });
     return;
   }
 
   if (action === 'toggle-comments') {
+    openComments[id] = !openComments[id];
     var box = document.querySelector('[data-comments-for="' + cssEscape(id) + '"]');
-    if (box) box.hidden = !box.hidden;
+    if (box) box.hidden = !openComments[id];
     return;
   }
 
@@ -374,26 +453,31 @@ function handleListAreaClick(e) {
     var input = document.querySelector('[data-comment-input="' + cssEscape(id) + '"]');
     var text = input ? input.value.trim() : '';
     if (!text) { alert('コメント内容を入力してください'); return; }
-    target.disabled = true;
 
-    // Optimistic UI: show the comment immediately (grayed out) instead of waiting for the round trip.
-    var commentBox = document.querySelector('[data-comments-for="' + cssEscape(id) + '"]');
-    var optimisticLine = null;
-    if (commentBox) {
-      optimisticLine = document.createElement('div');
-      optimisticLine.className = 'comment-line';
-      optimisticLine.style.opacity = '0.5';
-      optimisticLine.innerHTML = '<span class="author">' + esc(myDisplayName || '自分') + '</span>：' + esc(text);
-      commentBox.insertBefore(optimisticLine, commentBox.querySelector('.comment-add'));
-      commentBox.hidden = false;
+    var cmtIdx = findItemIndexById(id);
+    var cmtPreviousComments = cmtIdx !== -1 ? currentItems[cmtIdx].comments : null;
+    openComments[id] = true; // keep the box open across the re-render this triggers
+
+    if (cmtIdx !== -1) {
+      // Optimistic UI: append the comment locally and re-render immediately,
+      // instead of waiting for the round trip.
+      var patchedItem = Object.assign({}, currentItems[cmtIdx]);
+      patchedItem.comments = (patchedItem.comments || []).concat([{
+        author: myDisplayName || '自分',
+        text: text,
+        createdAt: nowIso()
+      }]);
+      currentItems[cmtIdx] = patchedItem;
+      itemsCache[currentView] = currentItems;
+      renderList(currentItems);
     }
     if (input) input.value = '';
 
     callApi({ action: 'shopping_list_comment', itemId: id, comment: text })
       .then(function (json) {
-        renderList(json.items);
-        var reopened = document.querySelector('[data-comments-for="' + cssEscape(id) + '"]');
-        if (reopened) reopened.hidden = false;
+        currentItems = json.items;
+        itemsCache[currentView] = currentItems;
+        renderList(currentItems);
       })
       .catch(function (err) {
         if (err.invalidResponse) {
@@ -402,9 +486,14 @@ function handleListAreaClick(e) {
           return;
         }
         alert('コメント送信に失敗しました: ' + err.message);
-        target.disabled = false;
+        if (cmtIdx !== -1) {
+          var reverted = Object.assign({}, currentItems[cmtIdx]);
+          reverted.comments = cmtPreviousComments;
+          currentItems[cmtIdx] = reverted;
+          itemsCache[currentView] = currentItems;
+          renderList(currentItems);
+        }
         if (input) input.value = text;
-        if (optimisticLine) optimisticLine.remove();
       });
     return;
   }
@@ -418,26 +507,41 @@ function handleAdd() {
   var input = document.getElementById('newItemText');
   var text = input.value.trim();
   if (!text) { alert('品名を入力してください'); return; }
-  var btn = document.getElementById('addBtn');
-  btn.disabled = true;
-  var originalLabel = btn.textContent;
-  btn.textContent = '追加中...';
+
+  // Optimistic UI: insert a temporary item and render it immediately — new items
+  // are always appended at the end (the server sorts by add time, oldest first).
+  var tempId = '__temp_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  var tempItem = {
+    id: tempId,
+    text: text,
+    status: 'active',
+    addedBy: myDisplayName || '自分',
+    addedAt: nowIso(),
+    completedBy: '', completedAt: '', archivedBy: '', archivedAt: '',
+    comments: []
+  };
+  currentItems = currentItems.concat([tempItem]);
+  itemsCache[currentView] = currentItems;
+  input.value = '';
+  renderList(currentItems);
+
   callApi({ action: 'shopping_list_add', text: text })
     .then(function (json) {
-      input.value = '';
-      btn.disabled = false;
-      btn.textContent = originalLabel;
-      renderList(json.items);
+      currentItems = json.items;
+      itemsCache[currentView] = currentItems;
+      renderList(currentItems);
     })
     .catch(function (err) {
-      btn.disabled = false;
-      btn.textContent = originalLabel;
       if (err.invalidResponse) {
         // The item was most likely added; refresh to show the real state.
-        input.value = '';
         loadList();
         return;
       }
+      // Roll back the temporary item.
+      currentItems = currentItems.filter(function (it) { return it.id !== tempId; });
+      itemsCache[currentView] = currentItems;
+      renderList(currentItems);
+      input.value = text;
       alert('追加に失敗しました: ' + err.message);
     });
 }
