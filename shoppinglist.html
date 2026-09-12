@@ -30,14 +30,12 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-  .tab-btn {
-    flex: 1; padding: 10px; font-size: 13px; font-weight: bold; text-align: center;
-    border: 1px solid #d8d1c6; border-radius: 8px; background: #fff; color: #6b6259; cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  .view-switch-wrap { text-align: right; margin-bottom: 10px; }
+  .view-switch {
+    font-size: 12.5px; color: #6b6259; background: none; border: none; padding: 4px 2px; cursor: pointer;
+    text-decoration: underline;
   }
-  .tab-btn.active { background: #1a3a2e; color: #fff; border-color: #1a3a2e; }
-  .tab-btn:disabled { opacity: 0.6; cursor: default; }
+  .view-switch:disabled { opacity: 0.6; cursor: default; }
 
   .add-box { display: flex; gap: 8px; margin-bottom: 16px; }
   .add-box[hidden] { display: none; }
@@ -74,8 +72,20 @@
   .icon-btn.restore-btn { font-size: 13px; font-weight: bold; color: #1a3a2e; border: 1px solid #1a3a2e; border-radius: 6px; padding: 6px 10px; }
 
   .comments { margin-top: 10px; padding-top: 10px; border-top: 1px solid #f0ebe0; }
-  .comment-line { font-size: 12.5px; color: #4a4239; margin-bottom: 4px; line-height: 1.4; }
+  .comment-line { font-size: 12.5px; color: #4a4239; margin-bottom: 4px; line-height: 1.4; display: flex; align-items: flex-start; gap: 6px; }
+  .comment-line .comment-body { flex: 1; min-width: 0; }
   .comment-line .author { font-weight: bold; color: #2a2420; }
+  .comment-mini-actions { flex-shrink: 0; white-space: nowrap; }
+  .comment-mini-btn {
+    border: none; background: none; padding: 0 2px; font-size: 11px; color: #a39a8d; cursor: pointer; text-decoration: underline;
+  }
+  .comment-edit-box { display: flex; gap: 6px; margin-bottom: 6px; }
+  .comment-edit-box input {
+    flex: 1; padding: 6px 8px; font-size: 12.5px; border: 1px solid #d8d1c6; border-radius: 6px; background: #fdfcfa;
+  }
+  .comment-edit-box button {
+    padding: 6px 8px; font-size: 11.5px; border: none; border-radius: 6px; background: #ece6d9; color: #4a4239; white-space: nowrap;
+  }
   .comment-add { display: flex; gap: 6px; margin-top: 6px; }
   .comment-add input {
     flex: 1; padding: 7px 8px; font-size: 12.5px; border: 1px solid #d8d1c6; border-radius: 6px; background: #fdfcfa;
@@ -95,9 +105,8 @@
 <div id="error" hidden></div>
 
 <div id="app" hidden>
-  <div class="tabs">
-    <button class="tab-btn active" id="tabActive" type="button">買い物リスト</button>
-    <button class="tab-btn" id="tabArchived" type="button">削除済み</button>
+  <div class="view-switch-wrap">
+    <button class="view-switch" id="viewSwitchBtn" type="button">🗑 削除済みを見る</button>
   </div>
 
   <div class="add-box" id="addBox">
@@ -119,6 +128,7 @@ var groupId = null;
 var myDisplayName = ''; // used only for optimistic (instant) UI before the server confirms
 var currentView = 'active'; // 'active' | 'archived'
 var openComments = {}; // itemId -> true if comment box expanded (kept across re-renders)
+var editingCommentId = null; // commentId currently being edited inline, or null
 var listRequestSeq = 0; // guards against out-of-order responses when switching tabs quickly
 var currentItems = []; // the items currently rendered for currentView (our local "known truth")
 var itemsCache = { active: null, archived: null }; // last-fetched list per tab, for instant tab switching
@@ -130,6 +140,22 @@ function findItemIndexById(id) {
     if (currentItems[i].id === id) return i;
   }
   return -1;
+}
+
+// Keeps the local optimistic list in the same order the server returns:
+// active items newest-added-first, then done items grouped below, also newest-first.
+// (Archived view keeps whatever order the server gave us.)
+function sortItemsForView(items, view) {
+  if (view === 'archived') return items;
+  var copy = items.slice();
+  copy.sort(function (a, b) {
+    var aDone = a.status === 'done' ? 1 : 0;
+    var bDone = b.status === 'done' ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    if (a.addedAt === b.addedAt) return 0;
+    return a.addedAt > b.addedAt ? -1 : 1;
+  });
+  return copy;
 }
 
 function showError(msg) {
@@ -151,6 +177,16 @@ function fmtDateTime(iso) {
   var mm = d.getMonth() + 1, dd = d.getDate();
   var hh = ('0' + d.getHours()).slice(-2), mi = ('0' + d.getMinutes()).slice(-2);
   return mm + '/' + dd + ' ' + hh + ':' + mi;
+}
+
+// True while the user is still composing text via IME (e.g. converting kana to kanji).
+// The Enter key press that CONFIRMS the conversion also fires a keydown with key === 'Enter',
+// which must NOT be treated as "submit" — otherwise a half-typed comment gets sent the moment
+// the user presses Enter to finalize kanji conversion. keyCode 229 is the standard marker for
+// "this keydown belongs to an IME composition", kept as a fallback since isComposing support/
+// timing varies across browsers and LINE's in-app WebView.
+function isComposingEvent(e) {
+  return !!(e.isComposing || e.keyCode === 229);
 }
 
 function rawApiCall(body) {
@@ -204,15 +240,13 @@ function callApi(body) {
 }
 
 function setTabsDisabled(disabled) {
-  document.getElementById('tabActive').disabled = disabled;
-  document.getElementById('tabArchived').disabled = disabled;
+  document.getElementById('viewSwitchBtn').disabled = disabled;
 }
 
 function switchTab(view) {
   if (view === currentView) return;
   currentView = view;
-  document.getElementById('tabActive').classList.toggle('active', view === 'active');
-  document.getElementById('tabArchived').classList.toggle('active', view === 'archived');
+  document.getElementById('viewSwitchBtn').textContent = view === 'archived' ? '← 買い物リストに戻る' : '🗑 削除済みを見る';
   document.getElementById('addBox').hidden = (view === 'archived');
   loadList();
 }
@@ -301,8 +335,25 @@ function renderList(items) {
     var commentsCount = (it.comments || []).length;
     var commentsHtml = '<div class="comments"' + (openComments[it.id] ? '' : ' hidden') + ' data-comments-for="' + esc(it.id) + '">';
     (it.comments || []).forEach(function (c) {
-      commentsHtml += '<div class="comment-line"><span class="author">' + esc(c.author) + '</span>：' + esc(c.text) +
-        '　<span style="color:#a39a8d;">(' + fmtDateTime(c.createdAt) + ')</span></div>';
+      var isMine = currentView !== 'archived' && c.author === myDisplayName;
+      if (editingCommentId === c.id) {
+        commentsHtml += '<div class="comment-edit-box">' +
+          '<input type="text" maxlength="300" value="' + esc(c.text) + '" data-comment-edit-input="' + esc(c.id) + '">' +
+          '<button data-action="comment-save" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '">保存</button>' +
+          '<button data-action="comment-cancel" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '">キャンセル</button>' +
+          '</div>';
+      } else {
+        commentsHtml += '<div class="comment-line">' +
+          '<div class="comment-body"><span class="author">' + esc(c.author) + '</span>：' + esc(c.text) +
+          '　<span style="color:#a39a8d;">(' + fmtDateTime(c.createdAt) + ')</span></div>' +
+          (isMine
+            ? '<div class="comment-mini-actions">' +
+                '<button class="comment-mini-btn" data-action="comment-edit-start" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '">編集</button>' +
+                '<button class="comment-mini-btn" data-action="comment-delete" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '">削除</button>' +
+              '</div>'
+            : '') +
+          '</div>';
+      }
     });
     if (currentView !== 'archived') {
       commentsHtml += '<div class="comment-add">' +
@@ -356,6 +407,7 @@ function handleListAreaClick(e) {
         patched.completedAt = '';
       }
       currentItems[idx] = patched;
+      currentItems = sortItemsForView(currentItems, currentView);
       itemsCache[currentView] = currentItems;
       renderList(currentItems);
     }
@@ -375,6 +427,7 @@ function handleListAreaClick(e) {
         alert('更新に失敗しました: ' + err.message);
         if (idx !== -1 && previous) {
           currentItems[idx] = previous;
+          currentItems = sortItemsForView(currentItems, currentView);
           itemsCache[currentView] = currentItems;
           renderList(currentItems);
         }
@@ -464,6 +517,7 @@ function handleListAreaClick(e) {
       // instead of waiting for the round trip.
       var patchedItem = Object.assign({}, currentItems[cmtIdx]);
       patchedItem.comments = (patchedItem.comments || []).concat([{
+        id: '__temp_' + Date.now(),
         author: myDisplayName || '自分',
         text: text,
         createdAt: nowIso()
@@ -498,6 +552,99 @@ function handleListAreaClick(e) {
       });
     return;
   }
+
+  if (action === 'comment-edit-start') {
+    var startCommentId = target.getAttribute('data-comment-id');
+    editingCommentId = startCommentId;
+    renderList(currentItems);
+    return;
+  }
+
+  if (action === 'comment-cancel') {
+    editingCommentId = null;
+    renderList(currentItems);
+    return;
+  }
+
+  if (action === 'comment-save') {
+    var saveCommentId = target.getAttribute('data-comment-id');
+    var editInput = document.querySelector('[data-comment-edit-input="' + cssEscape(saveCommentId) + '"]');
+    var newText = editInput ? editInput.value.trim() : '';
+    if (!newText) { alert('コメント内容を入力してください'); return; }
+
+    var saveItemIdx = findItemIndexById(id);
+    var savePreviousComments = saveItemIdx !== -1 ? currentItems[saveItemIdx].comments : null;
+    editingCommentId = null;
+
+    if (saveItemIdx !== -1) {
+      var savedItem = Object.assign({}, currentItems[saveItemIdx]);
+      savedItem.comments = (savedItem.comments || []).map(function (c) {
+        return c.id === saveCommentId ? Object.assign({}, c, { text: newText }) : c;
+      });
+      currentItems[saveItemIdx] = savedItem;
+      itemsCache[currentView] = currentItems;
+      renderList(currentItems);
+    }
+
+    callApi({ action: 'shopping_list_comment_edit', commentId: saveCommentId, comment: newText })
+      .then(function (json) {
+        currentItems = json.items;
+        itemsCache[currentView] = currentItems;
+        renderList(currentItems);
+      })
+      .catch(function (err) {
+        if (err.invalidResponse) {
+          loadList();
+          return;
+        }
+        alert('コメントの修正に失敗しました: ' + err.message);
+        if (saveItemIdx !== -1) {
+          var revertedSave = Object.assign({}, currentItems[saveItemIdx]);
+          revertedSave.comments = savePreviousComments;
+          currentItems[saveItemIdx] = revertedSave;
+          itemsCache[currentView] = currentItems;
+          renderList(currentItems);
+        }
+      });
+    return;
+  }
+
+  if (action === 'comment-delete') {
+    if (!confirm('このコメントを削除しますか？')) return;
+    var delCommentId = target.getAttribute('data-comment-id');
+    var delItemIdx = findItemIndexById(id);
+    var delPreviousComments = delItemIdx !== -1 ? currentItems[delItemIdx].comments : null;
+
+    if (delItemIdx !== -1) {
+      var delItem = Object.assign({}, currentItems[delItemIdx]);
+      delItem.comments = (delItem.comments || []).filter(function (c) { return c.id !== delCommentId; });
+      currentItems[delItemIdx] = delItem;
+      itemsCache[currentView] = currentItems;
+      renderList(currentItems);
+    }
+
+    callApi({ action: 'shopping_list_comment_delete', commentId: delCommentId })
+      .then(function (json) {
+        currentItems = json.items;
+        itemsCache[currentView] = currentItems;
+        renderList(currentItems);
+      })
+      .catch(function (err) {
+        if (err.invalidResponse) {
+          loadList();
+          return;
+        }
+        alert('コメントの削除に失敗しました: ' + err.message);
+        if (delItemIdx !== -1) {
+          var revertedDel = Object.assign({}, currentItems[delItemIdx]);
+          revertedDel.comments = delPreviousComments;
+          currentItems[delItemIdx] = revertedDel;
+          itemsCache[currentView] = currentItems;
+          renderList(currentItems);
+        }
+      });
+    return;
+  }
 }
 
 function cssEscape(s) {
@@ -509,8 +656,8 @@ function handleAdd() {
   var text = input.value.trim();
   if (!text) { alert('品名を入力してください'); return; }
 
-  // Optimistic UI: insert a temporary item and render it immediately — new items
-  // are always appended at the end (the server sorts by add time, oldest first).
+  // Optimistic UI: insert a temporary item and render it immediately. New items are
+  // sorted newest-first (see sortItemsForView), so it will appear at the top of the list.
   var tempId = '__temp_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   var tempItem = {
     id: tempId,
@@ -521,7 +668,7 @@ function handleAdd() {
     completedBy: '', completedAt: '', archivedBy: '', archivedAt: '',
     comments: []
   };
-  currentItems = currentItems.concat([tempItem]);
+  currentItems = sortItemsForView(currentItems.concat([tempItem]), currentView);
   itemsCache[currentView] = currentItems;
   input.value = '';
   renderList(currentItems);
@@ -547,16 +694,24 @@ function handleAdd() {
     });
 }
 
-document.getElementById('tabActive').addEventListener('click', function () { switchTab('active'); });
-document.getElementById('tabArchived').addEventListener('click', function () { switchTab('archived'); });
+document.getElementById('viewSwitchBtn').addEventListener('click', function () {
+  switchTab(currentView === 'archived' ? 'active' : 'archived');
+});
 document.getElementById('addBtn').addEventListener('click', handleAdd);
-document.getElementById('newItemText').addEventListener('keydown', function (e) { if (e.key === 'Enter') handleAdd(); });
+document.getElementById('newItemText').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !isComposingEvent(e)) handleAdd();
+});
 document.getElementById('listArea').addEventListener('click', handleListAreaClick);
 document.getElementById('listArea').addEventListener('keydown', function (e) {
-  if (e.key === 'Enter' && e.target && e.target.hasAttribute('data-comment-input')) {
+  if (e.key !== 'Enter' || isComposingEvent(e) || !e.target) return;
+  if (e.target.hasAttribute('data-comment-input')) {
     var id = e.target.getAttribute('data-comment-input');
     var btn = document.querySelector('[data-action="comment"][data-id="' + cssEscape(id) + '"]');
     if (btn) btn.click();
+  } else if (e.target.hasAttribute('data-comment-edit-input')) {
+    var commentId = e.target.getAttribute('data-comment-edit-input');
+    var saveBtn = document.querySelector('[data-action="comment-save"][data-comment-id="' + cssEscape(commentId) + '"]');
+    if (saveBtn) saveBtn.click();
   }
 });
 
