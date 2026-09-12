@@ -141,19 +141,54 @@ function fmtDateTime(iso) {
   return mm + '/' + dd + ' ' + hh + ':' + mi;
 }
 
-function callApi(body) {
+function rawApiCall(body) {
   body.idToken = idToken;
   if (groupId) body.groupId = groupId;
   return fetch(WEBAPP_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    cache: 'no-store'
   })
-    .then(function (res) { return res.json(); })
+    .then(function (res) { return res.text(); })
+    .then(function (text) {
+      var json;
+      try {
+        json = JSON.parse(text);
+      } catch (e) {
+        // Occasionally the LINE in-app browser / Google's redirect layer returns an HTML
+        // page instead of the JSON our server actually sent. This is a transient glitch,
+        // not a real failure of the request — the server side may well have succeeded.
+        var parseErr = new Error('サーバーの応答を読み取れませんでした');
+        parseErr.invalidResponse = true;
+        throw parseErr;
+      }
+      return json;
+    })
     .then(function (json) {
       if (!json.ok) { throw new Error(json.error || '処理に失敗しました'); }
       return json;
     });
+}
+
+// Wrapper used by all callers. Read-only "get" actions are safe to silently retry once
+// on the transient HTML-instead-of-JSON glitch, since repeating a read has no side effects.
+// Mutating actions are NOT retried here (that could double-submit); see each handler below.
+function callApi(body) {
+  var isReadOnly = body.action === 'shopping_list_get' || body.action === 'shopping_list_get_archived';
+  return rawApiCall(body).catch(function (err) {
+    if (isReadOnly && err.invalidResponse) {
+      return new Promise(function (resolve) { setTimeout(resolve, 500); })
+        .then(function () { return rawApiCall(body); })
+        .catch(function (err2) {
+          if (err2.invalidResponse) {
+            throw new Error('通信が不安定なため読み込めませんでした。もう一度お試しください。');
+          }
+          throw err2;
+        });
+    }
+    throw err;
+  });
 }
 
 function setTabsDisabled(disabled) {
@@ -282,6 +317,11 @@ function handleListAreaClick(e) {
     callApi({ action: apiAction, itemId: id })
       .then(function (json) { renderList(json.items); })
       .catch(function (err) {
+        if (err.invalidResponse) {
+          // The update most likely went through on the server; just refresh to confirm.
+          loadList();
+          return;
+        }
         alert('更新に失敗しました: ' + err.message);
         target.checked = !checked;
         if (card) card.classList.toggle('done', !checked);
@@ -298,6 +338,10 @@ function handleListAreaClick(e) {
     callApi({ action: 'shopping_list_archive', itemId: id })
       .then(function (json) { renderList(json.items); })
       .catch(function (err) {
+        if (err.invalidResponse) {
+          loadList();
+          return;
+        }
         alert('削除に失敗しました: ' + err.message);
         if (archiveCard) { archiveCard.style.opacity = ''; archiveCard.style.pointerEvents = ''; }
       });
@@ -310,6 +354,10 @@ function handleListAreaClick(e) {
     callApi({ action: 'shopping_list_restore', itemId: id })
       .then(function (json) { renderList(json.items); })
       .catch(function (err) {
+        if (err.invalidResponse) {
+          loadList();
+          return;
+        }
         alert('復元に失敗しました: ' + err.message);
         if (restoreCard) { restoreCard.style.opacity = ''; restoreCard.style.pointerEvents = ''; }
       });
@@ -348,6 +396,11 @@ function handleListAreaClick(e) {
         if (reopened) reopened.hidden = false;
       })
       .catch(function (err) {
+        if (err.invalidResponse) {
+          // The comment most likely went through; refresh to show the real state.
+          loadList();
+          return;
+        }
         alert('コメント送信に失敗しました: ' + err.message);
         target.disabled = false;
         if (input) input.value = text;
@@ -376,7 +429,17 @@ function handleAdd() {
       btn.textContent = originalLabel;
       renderList(json.items);
     })
-    .catch(function (err) { alert('追加に失敗しました: ' + err.message); btn.disabled = false; btn.textContent = originalLabel; });
+    .catch(function (err) {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+      if (err.invalidResponse) {
+        // The item was most likely added; refresh to show the real state.
+        input.value = '';
+        loadList();
+        return;
+      }
+      alert('追加に失敗しました: ' + err.message);
+    });
 }
 
 document.getElementById('tabActive').addEventListener('click', function () { switchTab('active'); });
