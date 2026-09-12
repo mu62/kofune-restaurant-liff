@@ -18,12 +18,26 @@
   #loading, #error { padding: 40px 0; text-align: center; color: #6b6259; font-size: 14px; }
   #error { color: #b3432b; }
 
+  .spinner {
+    display: inline-block;
+    width: 18px; height: 18px;
+    border: 3px solid #e6ded1;
+    border-top-color: #1a3a2e;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
   .tab-btn {
     flex: 1; padding: 10px; font-size: 13px; font-weight: bold; text-align: center;
     border: 1px solid #d8d1c6; border-radius: 8px; background: #fff; color: #6b6259; cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   }
   .tab-btn.active { background: #1a3a2e; color: #fff; border-color: #1a3a2e; }
+  .tab-btn:disabled { opacity: 0.6; cursor: default; }
 
   .add-box { display: flex; gap: 8px; margin-bottom: 16px; }
   .add-box input {
@@ -35,11 +49,16 @@
   }
   .add-box button:disabled { background: #b7c2bc; }
 
-  #empty { padding: 32px 0; text-align: center; color: #a39a8d; font-size: 13.5px; }
+  #empty, #listLoading { padding: 32px 0; text-align: center; color: #a39a8d; font-size: 13.5px; }
+
+  #listArea { min-height: 40px; opacity: 1; transition: opacity 0.12s ease; }
+  #listArea.is-loading { opacity: 0.4; }
 
   .item-card {
     background: #fff; border: 1px solid #e6ded1; border-radius: 10px; padding: 12px; margin-bottom: 10px;
+    animation: fadeIn 0.15s ease;
   }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
   .item-card.done .item-text { text-decoration: line-through; color: #a39a8d; }
   .item-row { display: flex; align-items: flex-start; gap: 10px; }
   .item-row input[type="checkbox"] { width: 20px; height: 20px; margin-top: 2px; flex-shrink: 0; }
@@ -71,7 +90,7 @@
 <h1>🛒 買い物リスト</h1>
 <p class="lead">メンバー全員で共有できる買い物リストです。追加・完了・コメント・削除ができます。</p>
 
-<div id="loading">読み込み中...</div>
+<div id="loading"><span class="spinner"></span>読み込み中...</div>
 <div id="error" hidden></div>
 
 <div id="app" hidden>
@@ -85,6 +104,7 @@
     <button id="addBtn" type="button">追加</button>
   </div>
 
+  <div id="listLoading" hidden><span class="spinner"></span>読み込み中...</div>
   <div id="listArea"></div>
   <div id="empty" hidden></div>
 </div>
@@ -97,6 +117,7 @@ var idToken = null;
 var groupId = null;
 var currentView = 'active'; // 'active' | 'archived'
 var openComments = {}; // itemId -> true if comment box expanded
+var listRequestSeq = 0; // guards against out-of-order responses when switching tabs quickly
 
 function showError(msg) {
   document.getElementById('loading').hidden = true;
@@ -134,7 +155,13 @@ function callApi(body) {
     });
 }
 
+function setTabsDisabled(disabled) {
+  document.getElementById('tabActive').disabled = disabled;
+  document.getElementById('tabArchived').disabled = disabled;
+}
+
 function switchTab(view) {
+  if (view === currentView) return;
   currentView = view;
   document.getElementById('tabActive').classList.toggle('active', view === 'active');
   document.getElementById('tabArchived').classList.toggle('active', view === 'archived');
@@ -143,10 +170,34 @@ function switchTab(view) {
 }
 
 function loadList() {
+  var seq = ++listRequestSeq;
+  var listArea = document.getElementById('listArea');
+  var emptyEl = document.getElementById('empty');
+  var loadingEl = document.getElementById('listLoading');
+
+  setTabsDisabled(true);
+  listArea.classList.add('is-loading');
+  emptyEl.hidden = true;
+  // Only show the big "loading" placeholder if the list is currently empty,
+  // so switching tabs when there's already content feels instant (dimmed) rather than blank.
+  if (!listArea.children.length) loadingEl.hidden = false;
+
   var action = currentView === 'archived' ? 'shopping_list_get_archived' : 'shopping_list_get';
   callApi({ action: action })
-    .then(function (json) { renderList(json.items); })
-    .catch(function (err) { alert('読み込みに失敗しました: ' + err.message); });
+    .then(function (json) {
+      if (seq !== listRequestSeq) return; // a newer request already superseded this one
+      loadingEl.hidden = true;
+      listArea.classList.remove('is-loading');
+      setTabsDisabled(false);
+      renderList(json.items);
+    })
+    .catch(function (err) {
+      if (seq !== listRequestSeq) return;
+      loadingEl.hidden = true;
+      listArea.classList.remove('is-loading');
+      setTabsDisabled(false);
+      alert('読み込みに失敗しました: ' + err.message);
+    });
 }
 
 function renderList(items) {
@@ -276,13 +327,16 @@ function handleAdd() {
   if (!text) { alert('品名を入力してください'); return; }
   var btn = document.getElementById('addBtn');
   btn.disabled = true;
+  var originalLabel = btn.textContent;
+  btn.textContent = '追加中...';
   callApi({ action: 'shopping_list_add', text: text })
     .then(function (json) {
       input.value = '';
       btn.disabled = false;
+      btn.textContent = originalLabel;
       renderList(json.items);
     })
-    .catch(function (err) { alert('追加に失敗しました: ' + err.message); btn.disabled = false; });
+    .catch(function (err) { alert('追加に失敗しました: ' + err.message); btn.disabled = false; btn.textContent = originalLabel; });
 }
 
 document.getElementById('tabActive').addEventListener('click', function () { switchTab('active'); });
