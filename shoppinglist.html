@@ -71,7 +71,7 @@
     animation: fadeIn 0.15s ease;
     transition: opacity 0.15s ease;
   }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
+  .done-heading { margin: 18px 0 8px; padding-top: 12px; border-top: 1px solid #e6ded1; }    .done-heading-title { font-size: 14px; font-weight: bold; color: #6b6259; margin: 0 0 4px; }
   .item-card.done .item-text { text-decoration: line-through; color: #a39a8d; }
   .item-card.busy { opacity: 0.65; }
   .item-card.archived-card {
@@ -135,7 +135,7 @@
   </div>
 
   <div class="add-box" id="addBox">
-    <input id="newItemText" type="text" placeholder="品名を入力（例：卵、牛乳）" maxlength="200">
+    <input id="newItemText" type="text" placeholder="品名を入力（例：卵 2個、牛乳 1本）" maxlength="200">
     <button id="addBtn" type="button">追加</button>
   </div>
 
@@ -412,10 +412,10 @@ function renderList(items) {
   }
   emptyEl.hidden = true;
 
-  items.forEach(function (it) {
+  var doneHeadingInserted = false; items.forEach(function (it) {
     var busy = !!it.busy;
     var isArchivedView = currentView === 'archived';
-    var card = document.createElement('div');
+    if (!isArchivedView && it.status === 'done' && !doneHeadingInserted) { doneHeadingInserted = true; var doneHeading = document.createElement('div'); doneHeading.className = 'done-heading'; doneHeading.innerHTML = '<div class="done-heading-title">完了済</div>' + '<div class="done-heading-note">完了してから14日経過すると自動的に削除されます。</div>'; listArea.appendChild(doneHeading); } var card = document.createElement('div');
     card.className = 'item-card' + (it.status === 'done' ? ' done' : '') + (busy ? ' busy' : '') + (isArchivedView ? ' archived-card' : '');
 
     var metaLine = '追加: ' + esc(it.addedBy) + '（' + fmtDateTime(it.addedAt) + '）';
