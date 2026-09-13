@@ -130,6 +130,14 @@ var currentView = 'active'; // 'active' | 'archived'
 var openComments = {}; // itemId -> true if comment box expanded (kept across re-renders)
 var editingCommentId = null; // commentId currently being edited inline, or null
 var listRequestSeq = 0; // guards against out-of-order responses when switching tabs quickly
+// Guards against out-of-order responses from mutating actions (toggle, archive, comment, ...).
+// Every response replaces the ENTIRE currentItems array with the server's snapshot, so if two
+// mutations are in flight (e.g. checking then quickly unchecking the same box) and their
+// responses arrive out of order, applying the older one would briefly clobber the newer,
+// already-correct optimistic state — the "flickers back" bug. Each mutating action captures
+// the sequence number at send time; only the response matching the LATEST captured number is
+// ever applied, so a late-arriving stale response is simply dropped.
+var mutationSeq = 0;
 var currentItems = []; // the items currently rendered for currentView (our local "known truth")
 var itemsCache = { active: null, archived: null }; // last-fetched list per tab, for instant tab switching
 
@@ -221,10 +229,9 @@ function rawApiCall(body) {
 
 // LIFF's ID token is fetched once at liff.init() and is never refreshed by the SDK on its
 // own. If the mini app is left open long enough, that cached token expires and the server's
-// LINE verification call starts failing with "IdToken expired" — every action (add, toggle,
-// comment, etc.) would otherwise show a generic, confusing failure forever until the user
-// manually reloads. Detect that specific server error and recover by reloading the page,
-// which re-runs liff.init() and obtains a fresh token automatically.
+// LINE verification call starts failing with "IdToken expired". Detect that specific server
+// error and recover by reloading the page, which re-runs liff.init() and obtains a fresh
+// token automatically.
 var tokenExpiredReloadTriggered = false;
 function isTokenExpiredError(err) {
   var msg = String((err && err.message) || '');
@@ -438,13 +445,16 @@ function handleListAreaClick(e) {
       renderList(currentItems);
     }
 
+    var toggleSeq = ++mutationSeq;
     callApi({ action: apiAction, itemId: id })
       .then(function (json) {
+        if (toggleSeq !== mutationSeq) return; // a newer action already superseded this one
         currentItems = json.items;
         itemsCache[currentView] = currentItems;
         renderList(currentItems);
       })
       .catch(function (err) {
+        if (toggleSeq !== mutationSeq) return;
         if (err.invalidResponse) {
           // The update most likely went through on the server; just refresh to confirm.
           loadList();
@@ -473,13 +483,16 @@ function handleListAreaClick(e) {
     itemsCache.archived = null; // the archived tab now has a new item; force a fresh fetch there
     renderList(currentItems);
 
+    var archSeq = ++mutationSeq;
     callApi({ action: 'shopping_list_archive', itemId: id })
       .then(function (json) {
+        if (archSeq !== mutationSeq) return;
         currentItems = json.items;
         itemsCache[currentView] = currentItems;
         renderList(currentItems);
       })
       .catch(function (err) {
+        if (archSeq !== mutationSeq) return;
         if (err.invalidResponse) {
           loadList();
           return;
@@ -503,13 +516,16 @@ function handleListAreaClick(e) {
     itemsCache.active = null; // the active tab now has a new item; force a fresh fetch there
     renderList(currentItems);
 
+    var restSeq = ++mutationSeq;
     callApi({ action: 'shopping_list_restore', itemId: id })
       .then(function (json) {
+        if (restSeq !== mutationSeq) return;
         currentItems = json.items;
         itemsCache[currentView] = currentItems;
         renderList(currentItems);
       })
       .catch(function (err) {
+        if (restSeq !== mutationSeq) return;
         if (err.invalidResponse) {
           loadList();
           return;
@@ -554,13 +570,16 @@ function handleListAreaClick(e) {
     }
     if (input) input.value = '';
 
+    var cmtSeq = ++mutationSeq;
     callApi({ action: 'shopping_list_comment', itemId: id, comment: text })
       .then(function (json) {
+        if (cmtSeq !== mutationSeq) return;
         currentItems = json.items;
         itemsCache[currentView] = currentItems;
         renderList(currentItems);
       })
       .catch(function (err) {
+        if (cmtSeq !== mutationSeq) return;
         if (err.invalidResponse) {
           // The comment most likely went through; refresh to show the real state.
           loadList();
@@ -612,13 +631,16 @@ function handleListAreaClick(e) {
       renderList(currentItems);
     }
 
+    var saveSeq = ++mutationSeq;
     callApi({ action: 'shopping_list_comment_edit', commentId: saveCommentId, comment: newText })
       .then(function (json) {
+        if (saveSeq !== mutationSeq) return;
         currentItems = json.items;
         itemsCache[currentView] = currentItems;
         renderList(currentItems);
       })
       .catch(function (err) {
+        if (saveSeq !== mutationSeq) return;
         if (err.invalidResponse) {
           loadList();
           return;
@@ -649,13 +671,16 @@ function handleListAreaClick(e) {
       renderList(currentItems);
     }
 
+    var delSeq = ++mutationSeq;
     callApi({ action: 'shopping_list_comment_delete', commentId: delCommentId })
       .then(function (json) {
+        if (delSeq !== mutationSeq) return;
         currentItems = json.items;
         itemsCache[currentView] = currentItems;
         renderList(currentItems);
       })
       .catch(function (err) {
+        if (delSeq !== mutationSeq) return;
         if (err.invalidResponse) {
           loadList();
           return;
@@ -699,13 +724,16 @@ function handleAdd() {
   input.value = '';
   renderList(currentItems);
 
+  var addSeq = ++mutationSeq;
   callApi({ action: 'shopping_list_add', text: text })
     .then(function (json) {
+      if (addSeq !== mutationSeq) return;
       currentItems = json.items;
       itemsCache[currentView] = currentItems;
       renderList(currentItems);
     })
     .catch(function (err) {
+      if (addSeq !== mutationSeq) return;
       if (err.invalidResponse) {
         // The item was most likely added; refresh to show the real state.
         loadList();
