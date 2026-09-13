@@ -56,9 +56,11 @@
   .item-card {
     background: #fff; border: 1px solid #e6ded1; border-radius: 10px; padding: 12px; margin-bottom: 10px;
     animation: fadeIn 0.15s ease;
+    transition: opacity 0.15s ease;
   }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
   .item-card.done .item-text { text-decoration: line-through; color: #a39a8d; }
+  .item-card.busy { opacity: 0.65; }
   .item-row { display: flex; align-items: flex-start; gap: 10px; }
   .item-row input[type="checkbox"] { width: 20px; height: 20px; margin-top: 2px; flex-shrink: 0; }
   .item-main { flex: 1; min-width: 0; }
@@ -70,6 +72,7 @@
     line-height: 1;
   }
   .icon-btn.restore-btn { font-size: 13px; font-weight: bold; color: #1a3a2e; border: 1px solid #1a3a2e; border-radius: 6px; padding: 6px 10px; }
+  button:disabled, input:disabled { opacity: 0.5; cursor: default; }
 
   .comments { margin-top: 10px; padding-top: 10px; border-top: 1px solid #f0ebe0; }
   .comment-line { font-size: 12.5px; color: #4a4239; margin-bottom: 4px; line-height: 1.4; display: flex; align-items: flex-start; gap: 6px; }
@@ -129,23 +132,58 @@ var myDisplayName = ''; // used only for optimistic (instant) UI before the serv
 var currentView = 'active'; // 'active' | 'archived'
 var openComments = {}; // itemId -> true if comment box expanded (kept across re-renders)
 var editingCommentId = null; // commentId currently being edited inline, or null
-var listRequestSeq = 0; // guards against out-of-order responses when switching tabs quickly
-// Guards against out-of-order responses from mutating actions (toggle, archive, comment, ...).
-// Every response replaces the ENTIRE currentItems array with the server's snapshot, so if two
-// mutations are in flight (e.g. checking then quickly unchecking the same box) and their
-// responses arrive out of order, applying the older one would briefly clobber the newer,
-// already-correct optimistic state — the "flickers back" bug. Each mutating action captures
-// the sequence number at send time; only the response matching the LATEST captured number is
-// ever applied, so a late-arriving stale response is simply dropped.
-var mutationSeq = 0;
-var currentItems = []; // the items currently rendered for currentView (our local "known truth")
-var itemsCache = { active: null, archived: null }; // last-fetched list per tab, for instant tab switching
+var listRequestSeq = 0; // guards against applying an out-of-date GET response after a newer one
+
+// ---------------------------------------------------------------------------------------
+// SYNC DESIGN
+// ---------------------------------------------------------------------------------------
+// Every server call (both reads and writes) is funneled through ONE queue and runs strictly
+// one at a time, in the order it was queued. Earlier versions of this app tried to detect and
+// paper over out-of-order network responses after the fact (a per-call sequence number), but
+// that only guarded against a response being *applied* late — it didn't stop two requests from
+// racing in flight, which is what caused real bugs: a rapid double-tap could send two deletes
+// for the same comment, and the second one would come back from the server as "not found".
+//
+// Serializing all requests removes the entire class of bug at the source: with only one
+// request ever in flight, there is nothing for it to race against. The trade-off (a little
+// less network parallelism) is a non-issue for a small shared list like this — requests are
+// small and fast, and every action still feels instant because of optimistic UI (below).
+//
+// Each item also carries a client-only `busy: true` flag while it has a request in flight
+// (for itself OR any of its comments). renderList() disables that item's controls while busy,
+// so a second tap on the same control simply can't happen — the classic "disable the button
+// until its request resolves" pattern. Structural changes (removing an item/comment, or an
+// item moving out of the current tab) are only ever applied once the server confirms them; we
+// never speculatively remove-then-possibly-reinsert, since that round trip is exactly what
+// produced the old flicker. Only ADDING a brand new item/comment is shown optimistically
+// (marked busy) — there's no prior state to flicker back to, so the worst case on failure is a
+// clean "it appeared, then was removed with an error", which is normal, expected feedback.
+var requestQueue = Promise.resolve();
+function enqueue(taskFn) {
+  var result = requestQueue.then(taskFn);
+  requestQueue = result; // taskFn always resolves internally (see callApi/catch below) — this chain never rejects
+  return result;
+}
 
 function nowIso() { return new Date().toISOString(); }
 
-function findItemIndexById(id) {
-  for (var i = 0; i < currentItems.length; i++) {
-    if (currentItems[i].id === id) return i;
+// itemsCache[view] is the single source of truth for that tab's items. currentItems is kept
+// only as a convenience mirror of itemsCache[currentView], for the tab actually on screen.
+var currentItems = [];
+var itemsCache = { active: null, archived: null };
+
+function getViewItems(view) { return itemsCache[view] || []; }
+function setViewItems(view, items) {
+  itemsCache[view] = items;
+  if (view === currentView) {
+    currentItems = items;
+    renderList(items);
+  }
+}
+function findIndexInView(view, id) {
+  var arr = getViewItems(view);
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i].id === id) return i;
   }
   return -1;
 }
@@ -246,7 +284,8 @@ function reloadForExpiredToken() {
 
 // Wrapper used by all callers. Read-only "get" actions are safe to silently retry once
 // on the transient HTML-instead-of-JSON glitch, since repeating a read has no side effects.
-// Mutating actions are NOT retried here (that could double-submit); see each handler below.
+// Mutating actions are NOT retried here (that could double-submit); each handler below deals
+// with its own failure instead.
 function callApi(body) {
   var isReadOnly = body.action === 'shopping_list_get' || body.action === 'shopping_list_get_archived';
   return rawApiCall(body).catch(function (err) {
@@ -307,27 +346,25 @@ function loadList() {
     if (!listArea.children.length) loadingEl.hidden = false;
   }
 
-  var action = viewAtRequest === 'archived' ? 'shopping_list_get_archived' : 'shopping_list_get';
-  callApi({ action: action })
-    .then(function (json) {
-      if (seq !== listRequestSeq) return; // a newer request already superseded this one
-      itemsCache[viewAtRequest] = json.items;
-      loadingEl.hidden = true;
-      listArea.classList.remove('is-loading');
-      setTabsDisabled(false);
-      if (viewAtRequest === currentView) {
-        currentItems = json.items;
-        renderList(currentItems);
-      }
-    })
-    .catch(function (err) {
-      if (seq !== listRequestSeq) return;
-      loadingEl.hidden = true;
-      listArea.classList.remove('is-loading');
-      setTabsDisabled(false);
-      // If we already had cached data showing, fail silently — the user still sees a good list.
-      if (!cached) alert('読み込みに失敗しました: ' + err.message);
-    });
+  enqueue(function () {
+    var action = viewAtRequest === 'archived' ? 'shopping_list_get_archived' : 'shopping_list_get';
+    return callApi({ action: action })
+      .then(function (json) {
+        if (seq !== listRequestSeq) return; // a newer request already superseded this one
+        setViewItems(viewAtRequest, json.items);
+        loadingEl.hidden = true;
+        listArea.classList.remove('is-loading');
+        setTabsDisabled(false);
+      })
+      .catch(function (err) {
+        if (seq !== listRequestSeq) return;
+        loadingEl.hidden = true;
+        listArea.classList.remove('is-loading');
+        setTabsDisabled(false);
+        // If we already had cached data showing, fail silently — the user still sees a good list.
+        if (!cached) alert('読み込みに失敗しました: ' + err.message);
+      });
+  });
 }
 
 function renderList(items) {
@@ -343,8 +380,9 @@ function renderList(items) {
   emptyEl.hidden = true;
 
   items.forEach(function (it) {
+    var busy = !!it.busy;
     var card = document.createElement('div');
-    card.className = 'item-card' + (it.status === 'done' ? ' done' : '');
+    card.className = 'item-card' + (it.status === 'done' ? ' done' : '') + (busy ? ' busy' : '');
 
     var metaLine = '追加: ' + esc(it.addedBy) + '（' + fmtDateTime(it.addedAt) + '）';
     if (it.status === 'done' && it.completedBy) {
@@ -356,14 +394,14 @@ function renderList(items) {
 
     var actionsHtml = '';
     if (currentView === 'archived') {
-      actionsHtml = '<div class="item-actions"><button class="icon-btn restore-btn" data-action="restore" data-id="' + esc(it.id) + '">復元</button></div>';
+      actionsHtml = '<div class="item-actions"><button class="icon-btn restore-btn" data-action="restore" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>復元</button></div>';
     } else {
-      actionsHtml = '<div class="item-actions"><button class="icon-btn" data-action="archive" data-id="' + esc(it.id) + '" title="削除">🗑</button></div>';
+      actionsHtml = '<div class="item-actions"><button class="icon-btn" data-action="archive" data-id="' + esc(it.id) + '" title="削除"' + (busy ? ' disabled' : '') + '>🗑</button></div>';
     }
 
     var checkboxHtml = currentView === 'archived'
       ? ''
-      : '<input type="checkbox" data-action="toggle" data-id="' + esc(it.id) + '" ' + (it.status === 'done' ? 'checked' : '') + '>';
+      : '<input type="checkbox" data-action="toggle" data-id="' + esc(it.id) + '" ' + (it.status === 'done' ? 'checked' : '') + (busy ? ' disabled' : '') + '>';
 
     var commentsCount = (it.comments || []).length;
     var commentsHtml = '<div class="comments"' + (openComments[it.id] ? '' : ' hidden') + ' data-comments-for="' + esc(it.id) + '">';
@@ -371,18 +409,21 @@ function renderList(items) {
       var isMine = currentView !== 'archived' && c.author === myDisplayName;
       if (editingCommentId === c.id) {
         commentsHtml += '<div class="comment-edit-box">' +
-          '<input type="text" maxlength="300" value="' + esc(c.text) + '" data-comment-edit-input="' + esc(c.id) + '">' +
-          '<button data-action="comment-save" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '">保存</button>' +
-          '<button data-action="comment-cancel" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '">キャンセル</button>' +
+          '<input type="text" maxlength="300" value="' + esc(c.text) + '" data-comment-edit-input="' + esc(c.id) + '"' + (busy ? ' disabled' : '') + '>' +
+          '<button data-action="comment-save" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>保存</button>' +
+          '<button data-action="comment-cancel" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>' +
           '</div>';
       } else {
-        commentsHtml += '<div class="comment-line">' +
+        var lineStyle = c.deleting ? ' style="opacity:0.5;text-decoration:line-through;"' : '';
+        commentsHtml += '<div class="comment-line"' + lineStyle + '>' +
           '<div class="comment-body"><span class="author">' + esc(c.author) + '</span>：' + esc(c.text) +
-          '　<span style="color:#a39a8d;">(' + fmtDateTime(c.createdAt) + ')</span></div>' +
+          '　<span style="color:#a39a8d;">(' + fmtDateTime(c.createdAt) + ')</span>' +
+          (c.pending ? '　<span style="color:#a39a8d;">送信中…</span>' : '') +
+          '</div>' +
           (isMine
             ? '<div class="comment-mini-actions">' +
-                '<button class="comment-mini-btn" data-action="comment-edit-start" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '">編集</button>' +
-                '<button class="comment-mini-btn" data-action="comment-delete" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '">削除</button>' +
+                '<button class="comment-mini-btn" data-action="comment-edit-start" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>編集</button>' +
+                '<button class="comment-mini-btn" data-action="comment-delete" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>削除</button>' +
               '</div>'
             : '') +
           '</div>';
@@ -390,8 +431,8 @@ function renderList(items) {
     });
     if (currentView !== 'archived') {
       commentsHtml += '<div class="comment-add">' +
-        '<input type="text" placeholder="コメントを入力" maxlength="300" data-comment-input="' + esc(it.id) + '">' +
-        '<button data-action="comment" data-id="' + esc(it.id) + '">送信</button>' +
+        '<input type="text" placeholder="コメントを入力" maxlength="300" data-comment-input="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>' +
+        '<button data-action="comment" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>送信</button>' +
         '</div>';
     }
     commentsHtml += '</div>';
@@ -400,7 +441,7 @@ function renderList(items) {
       '<div class="item-row">' +
         checkboxHtml +
         '<div class="item-main">' +
-          '<div class="item-text">' + esc(it.text) + '</div>' +
+          '<div class="item-text">' + esc(it.text) + (busy ? '　<span style="color:#a39a8d;font-weight:normal;font-size:11.5px;">処理中…</span>' : '') + '</div>' +
           '<div class="item-meta">' + metaLine + '</div>' +
           '<button class="comment-toggle" data-action="toggle-comments" data-id="' + esc(it.id) + '">💬 コメント' + (commentsCount ? '（' + commentsCount + '）' : '') + '</button>' +
         '</div>' +
@@ -417,124 +458,118 @@ function handleListAreaClick(e) {
   var action = target.getAttribute('data-action');
   if (!action) return;
   var id = target.getAttribute('data-id');
+  var view = currentView; // the mutation belongs to whichever tab was actually on screen at click time
 
   if (action === 'toggle') {
+    var idx = findIndexInView(view, id);
+    if (idx === -1) return;
+    var item = getViewItems(view)[idx];
+    if (item.busy) return; // a request for this item is already in flight; ignore the extra tap
     var checked = target.checked;
     var apiAction = checked ? 'shopping_list_complete' : 'shopping_list_uncomplete';
-    var idx = findItemIndexById(id);
-    var previous = idx !== -1 ? currentItems[idx] : null;
+    var previous = item;
 
-    if (idx !== -1) {
-      // Optimistic UI: patch the FULL item locally (not just a CSS class) so the
-      // "完了: 名前（日時）" meta line appears/disappears instantly too, instead of
-      // lagging a few seconds behind the checkbox — this was the main cause of
-      // "unchecking feels slow" even though checking felt fast.
-      var patched = Object.assign({}, currentItems[idx]);
-      if (checked) {
-        patched.status = 'done';
-        patched.completedBy = myDisplayName || patched.completedBy || '';
-        patched.completedAt = nowIso();
-      } else {
-        patched.status = 'active';
-        patched.completedBy = '';
-        patched.completedAt = '';
-      }
-      currentItems[idx] = patched;
-      currentItems = sortItemsForView(currentItems, currentView);
-      itemsCache[currentView] = currentItems;
-      renderList(currentItems);
+    // Optimistic UI: patch the FULL item locally (not just a CSS class) so the
+    // "完了: 名前（日時）" meta line appears/disappears instantly too.
+    var patched = Object.assign({}, item, { busy: true });
+    if (checked) {
+      patched.status = 'done';
+      patched.completedBy = myDisplayName || patched.completedBy || '';
+      patched.completedAt = nowIso();
+    } else {
+      patched.status = 'active';
+      patched.completedBy = '';
+      patched.completedAt = '';
     }
+    var arr = getViewItems(view).slice();
+    arr[idx] = patched;
+    setViewItems(view, sortItemsForView(arr, view));
 
-    var toggleSeq = ++mutationSeq;
-    callApi({ action: apiAction, itemId: id })
-      .then(function (json) {
-        if (toggleSeq !== mutationSeq) return; // a newer action already superseded this one
-        currentItems = json.items;
-        itemsCache[currentView] = currentItems;
-        renderList(currentItems);
-      })
-      .catch(function (err) {
-        if (toggleSeq !== mutationSeq) return;
-        if (err.invalidResponse) {
-          // The update most likely went through on the server; just refresh to confirm.
-          loadList();
-          return;
-        }
-        alert('更新に失敗しました: ' + err.message);
-        if (idx !== -1 && previous) {
-          currentItems[idx] = previous;
-          currentItems = sortItemsForView(currentItems, currentView);
-          itemsCache[currentView] = currentItems;
-          renderList(currentItems);
-        }
-      });
+    enqueue(function () {
+      return callApi({ action: apiAction, itemId: id })
+        .then(function (json) {
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            // The update most likely went through on the server; just refresh to confirm.
+            loadList();
+            return;
+          }
+          alert('更新に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = previous;
+          setViewItems(view, sortItemsForView(arr2, view));
+        });
+    });
     return;
   }
 
   if (action === 'archive') {
-    if (!confirm('このアイテムを削除しますか？（削除済みリストから復元できます）')) return;
-    var archIdx = findItemIndexById(id);
+    var archIdx = findIndexInView(view, id);
     if (archIdx === -1) return;
-    var archPrevious = currentItems[archIdx];
-    // Optimistic UI: remove it from the active list immediately — this is exactly
-    // what the server will report back (shopping_list_get excludes archived items).
-    currentItems = currentItems.filter(function (it) { return it.id !== id; });
-    itemsCache[currentView] = currentItems;
-    itemsCache.archived = null; // the archived tab now has a new item; force a fresh fetch there
-    renderList(currentItems);
+    var archItem = getViewItems(view)[archIdx];
+    if (archItem.busy) return;
+    if (!confirm('このアイテムを削除しますか？（削除済みリストから復元できます）')) return;
 
-    var archSeq = ++mutationSeq;
-    callApi({ action: 'shopping_list_archive', itemId: id })
-      .then(function (json) {
-        if (archSeq !== mutationSeq) return;
-        currentItems = json.items;
-        itemsCache[currentView] = currentItems;
-        renderList(currentItems);
-      })
-      .catch(function (err) {
-        if (archSeq !== mutationSeq) return;
-        if (err.invalidResponse) {
-          loadList();
-          return;
-        }
-        alert('削除に失敗しました: ' + err.message);
-        // Put it back where it was.
-        currentItems.splice(archIdx, 0, archPrevious);
-        itemsCache[currentView] = currentItems;
-        renderList(currentItems);
-      });
+    // Mark it busy but keep it visible until the server confirms — removing it immediately
+    // and re-inserting it on failure is exactly the kind of round trip that used to flicker.
+    var archPrevious = archItem;
+    var arr = getViewItems(view).slice();
+    arr[archIdx] = Object.assign({}, archItem, { busy: true });
+    setViewItems(view, arr);
+
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_archive', itemId: id })
+        .then(function (json) {
+          itemsCache.archived = null; // the archived tab now has a new item; force a fresh fetch there
+          setViewItems(view, json.items); // server's active list no longer includes this item
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            loadList();
+            return;
+          }
+          alert('削除に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = archPrevious;
+          setViewItems(view, arr2);
+        });
+    });
     return;
   }
 
   if (action === 'restore') {
-    var restIdx = findItemIndexById(id);
+    var restIdx = findIndexInView(view, id);
     if (restIdx === -1) return;
-    var restPrevious = currentItems[restIdx];
-    // Optimistic UI: remove it from the archived list immediately.
-    currentItems = currentItems.filter(function (it) { return it.id !== id; });
-    itemsCache[currentView] = currentItems;
-    itemsCache.active = null; // the active tab now has a new item; force a fresh fetch there
-    renderList(currentItems);
+    var restItem = getViewItems(view)[restIdx];
+    if (restItem.busy) return;
+    var restPrevious = restItem;
 
-    var restSeq = ++mutationSeq;
-    callApi({ action: 'shopping_list_restore', itemId: id })
-      .then(function (json) {
-        if (restSeq !== mutationSeq) return;
-        currentItems = json.items;
-        itemsCache[currentView] = currentItems;
-        renderList(currentItems);
-      })
-      .catch(function (err) {
-        if (restSeq !== mutationSeq) return;
-        if (err.invalidResponse) {
-          loadList();
-          return;
-        }
-        alert('復元に失敗しました: ' + err.message);
-        currentItems.splice(restIdx, 0, restPrevious);
-        itemsCache[currentView] = currentItems;
-        renderList(currentItems);
-      });
+    var arr = getViewItems(view).slice();
+    arr[restIdx] = Object.assign({}, restItem, { busy: true });
+    setViewItems(view, arr);
+
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_restore', itemId: id })
+        .then(function (json) {
+          itemsCache.active = null; // the active tab now has a new item; force a fresh fetch there
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            loadList();
+            return;
+          }
+          alert('復元に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = restPrevious;
+          setViewItems(view, arr2);
+        });
+    });
     return;
   }
 
@@ -546,59 +581,57 @@ function handleListAreaClick(e) {
   }
 
   if (action === 'comment') {
+    var cmtIdx = findIndexInView(view, id);
+    if (cmtIdx === -1) return;
+    var cmtItem = getViewItems(view)[cmtIdx];
+    if (cmtItem.busy) return;
+
     var input = document.querySelector('[data-comment-input="' + cssEscape(id) + '"]');
     var text = input ? input.value.trim() : '';
     if (!text) { alert('コメント内容を入力してください'); return; }
 
-    var cmtIdx = findItemIndexById(id);
-    var cmtPreviousComments = cmtIdx !== -1 ? currentItems[cmtIdx].comments : null;
     openComments[id] = true; // keep the box open across the re-render this triggers
 
-    if (cmtIdx !== -1) {
-      // Optimistic UI: append the comment locally and re-render immediately,
-      // instead of waiting for the round trip.
-      var patchedItem = Object.assign({}, currentItems[cmtIdx]);
-      patchedItem.comments = (patchedItem.comments || []).concat([{
-        id: '__temp_' + Date.now(),
-        author: myDisplayName || '自分',
-        text: text,
-        createdAt: nowIso()
-      }]);
-      currentItems[cmtIdx] = patchedItem;
-      itemsCache[currentView] = currentItems;
-      renderList(currentItems);
-    }
+    // Optimistic UI: append the comment locally and re-render immediately. A brand new
+    // comment has no prior state to flicker back to, so this is safe to show right away.
+    var patchedItem = Object.assign({}, cmtItem, { busy: true });
+    patchedItem.comments = (patchedItem.comments || []).concat([{
+      id: '__temp_' + Date.now(),
+      author: myDisplayName || '自分',
+      text: text,
+      createdAt: nowIso(),
+      pending: true
+    }]);
+    var arr = getViewItems(view).slice();
+    arr[cmtIdx] = patchedItem;
+    setViewItems(view, arr);
     if (input) input.value = '';
 
-    var cmtSeq = ++mutationSeq;
-    callApi({ action: 'shopping_list_comment', itemId: id, comment: text })
-      .then(function (json) {
-        if (cmtSeq !== mutationSeq) return;
-        currentItems = json.items;
-        itemsCache[currentView] = currentItems;
-        renderList(currentItems);
-      })
-      .catch(function (err) {
-        if (cmtSeq !== mutationSeq) return;
-        if (err.invalidResponse) {
-          // The comment most likely went through; refresh to show the real state.
-          loadList();
-          return;
-        }
-        alert('コメント送信に失敗しました: ' + err.message);
-        if (cmtIdx !== -1) {
-          var reverted = Object.assign({}, currentItems[cmtIdx]);
-          reverted.comments = cmtPreviousComments;
-          currentItems[cmtIdx] = reverted;
-          itemsCache[currentView] = currentItems;
-          renderList(currentItems);
-        }
-        if (input) input.value = text;
-      });
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_comment', itemId: id, comment: text })
+        .then(function (json) {
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            // The comment most likely went through; refresh to show the real state.
+            loadList();
+            return;
+          }
+          alert('コメント送信に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = cmtItem; // full revert: drops the temp comment, clears busy
+          setViewItems(view, arr2);
+          if (input) input.value = text;
+        });
+    });
     return;
   }
 
   if (action === 'comment-edit-start') {
+    var startItemIdx = findIndexInView(view, id);
+    if (startItemIdx !== -1 && getViewItems(view)[startItemIdx].busy) return;
     var startCommentId = target.getAttribute('data-comment-id');
     editingCommentId = startCommentId;
     renderList(currentItems);
@@ -612,88 +645,80 @@ function handleListAreaClick(e) {
   }
 
   if (action === 'comment-save') {
+    var saveItemIdx = findIndexInView(view, id);
+    if (saveItemIdx === -1) return;
+    var saveItem = getViewItems(view)[saveItemIdx];
+    if (saveItem.busy) return;
+
     var saveCommentId = target.getAttribute('data-comment-id');
     var editInput = document.querySelector('[data-comment-edit-input="' + cssEscape(saveCommentId) + '"]');
     var newText = editInput ? editInput.value.trim() : '';
     if (!newText) { alert('コメント内容を入力してください'); return; }
 
-    var saveItemIdx = findItemIndexById(id);
-    var savePreviousComments = saveItemIdx !== -1 ? currentItems[saveItemIdx].comments : null;
     editingCommentId = null;
+    var savedItem = Object.assign({}, saveItem, { busy: true });
+    savedItem.comments = (savedItem.comments || []).map(function (c) {
+      return c.id === saveCommentId ? Object.assign({}, c, { text: newText }) : c;
+    });
+    var arr = getViewItems(view).slice();
+    arr[saveItemIdx] = savedItem;
+    setViewItems(view, arr);
 
-    if (saveItemIdx !== -1) {
-      var savedItem = Object.assign({}, currentItems[saveItemIdx]);
-      savedItem.comments = (savedItem.comments || []).map(function (c) {
-        return c.id === saveCommentId ? Object.assign({}, c, { text: newText }) : c;
-      });
-      currentItems[saveItemIdx] = savedItem;
-      itemsCache[currentView] = currentItems;
-      renderList(currentItems);
-    }
-
-    var saveSeq = ++mutationSeq;
-    callApi({ action: 'shopping_list_comment_edit', commentId: saveCommentId, comment: newText })
-      .then(function (json) {
-        if (saveSeq !== mutationSeq) return;
-        currentItems = json.items;
-        itemsCache[currentView] = currentItems;
-        renderList(currentItems);
-      })
-      .catch(function (err) {
-        if (saveSeq !== mutationSeq) return;
-        if (err.invalidResponse) {
-          loadList();
-          return;
-        }
-        alert('コメントの修正に失敗しました: ' + err.message);
-        if (saveItemIdx !== -1) {
-          var revertedSave = Object.assign({}, currentItems[saveItemIdx]);
-          revertedSave.comments = savePreviousComments;
-          currentItems[saveItemIdx] = revertedSave;
-          itemsCache[currentView] = currentItems;
-          renderList(currentItems);
-        }
-      });
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_comment_edit', commentId: saveCommentId, comment: newText })
+        .then(function (json) {
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            loadList();
+            return;
+          }
+          alert('コメントの修正に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = saveItem;
+          setViewItems(view, arr2);
+        });
+    });
     return;
   }
 
   if (action === 'comment-delete') {
+    var delItemIdx = findIndexInView(view, id);
+    if (delItemIdx === -1) return;
+    var delItem = getViewItems(view)[delItemIdx];
+    if (delItem.busy) return;
     if (!confirm('このコメントを削除しますか？')) return;
+
     var delCommentId = target.getAttribute('data-comment-id');
-    var delItemIdx = findItemIndexById(id);
-    var delPreviousComments = delItemIdx !== -1 ? currentItems[delItemIdx].comments : null;
+    // Mark the comment as "deleting" in place instead of removing it right away, so a
+    // failed delete never has to bring it back — no removal, no flicker.
+    var patchedDel = Object.assign({}, delItem, { busy: true });
+    patchedDel.comments = (patchedDel.comments || []).map(function (c) {
+      return c.id === delCommentId ? Object.assign({}, c, { deleting: true }) : c;
+    });
+    var arr = getViewItems(view).slice();
+    arr[delItemIdx] = patchedDel;
+    setViewItems(view, arr);
 
-    if (delItemIdx !== -1) {
-      var delItem = Object.assign({}, currentItems[delItemIdx]);
-      delItem.comments = (delItem.comments || []).filter(function (c) { return c.id !== delCommentId; });
-      currentItems[delItemIdx] = delItem;
-      itemsCache[currentView] = currentItems;
-      renderList(currentItems);
-    }
-
-    var delSeq = ++mutationSeq;
-    callApi({ action: 'shopping_list_comment_delete', commentId: delCommentId })
-      .then(function (json) {
-        if (delSeq !== mutationSeq) return;
-        currentItems = json.items;
-        itemsCache[currentView] = currentItems;
-        renderList(currentItems);
-      })
-      .catch(function (err) {
-        if (delSeq !== mutationSeq) return;
-        if (err.invalidResponse) {
-          loadList();
-          return;
-        }
-        alert('コメントの削除に失敗しました: ' + err.message);
-        if (delItemIdx !== -1) {
-          var revertedDel = Object.assign({}, currentItems[delItemIdx]);
-          revertedDel.comments = delPreviousComments;
-          currentItems[delItemIdx] = revertedDel;
-          itemsCache[currentView] = currentItems;
-          renderList(currentItems);
-        }
-      });
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_comment_delete', commentId: delCommentId })
+        .then(function (json) {
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            loadList();
+            return;
+          }
+          alert('コメントの削除に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = delItem; // full revert: clears both "deleting" and busy
+          setViewItems(view, arr2);
+        });
+    });
     return;
   }
 }
@@ -702,10 +727,18 @@ function cssEscape(s) {
   return String(s).replace(/["\\]/g, '\\$&');
 }
 
+var addBusy = false; // guards the add button itself against a rapid double-tap creating duplicates
+
 function handleAdd() {
+  if (addBusy) return;
   var input = document.getElementById('newItemText');
   var text = input.value.trim();
   if (!text) { alert('品名を入力してください'); return; }
+  var view = currentView;
+
+  addBusy = true;
+  document.getElementById('addBtn').disabled = true;
+  input.disabled = true;
 
   // Optimistic UI: insert a temporary item and render it immediately. New items are
   // sorted newest-first (see sortItemsForView), so it will appear at the top of the list.
@@ -717,35 +750,36 @@ function handleAdd() {
     addedBy: myDisplayName || '自分',
     addedAt: nowIso(),
     completedBy: '', completedAt: '', archivedBy: '', archivedAt: '',
-    comments: []
+    comments: [],
+    busy: true
   };
-  currentItems = sortItemsForView(currentItems.concat([tempItem]), currentView);
-  itemsCache[currentView] = currentItems;
+  var arr = sortItemsForView(getViewItems(view).concat([tempItem]), view);
+  setViewItems(view, arr);
   input.value = '';
-  renderList(currentItems);
 
-  var addSeq = ++mutationSeq;
-  callApi({ action: 'shopping_list_add', text: text })
-    .then(function (json) {
-      if (addSeq !== mutationSeq) return;
-      currentItems = json.items;
-      itemsCache[currentView] = currentItems;
-      renderList(currentItems);
-    })
-    .catch(function (err) {
-      if (addSeq !== mutationSeq) return;
-      if (err.invalidResponse) {
-        // The item was most likely added; refresh to show the real state.
-        loadList();
-        return;
-      }
-      // Roll back the temporary item.
-      currentItems = currentItems.filter(function (it) { return it.id !== tempId; });
-      itemsCache[currentView] = currentItems;
-      renderList(currentItems);
-      input.value = text;
-      alert('追加に失敗しました: ' + err.message);
-    });
+  enqueue(function () {
+    return callApi({ action: 'shopping_list_add', text: text })
+      .then(function (json) {
+        setViewItems(view, json.items);
+      })
+      .catch(function (err) {
+        if (err.invalidResponse) {
+          // The item was most likely added; refresh to show the real state.
+          loadList();
+          return;
+        }
+        // Roll back the temporary item.
+        var arr2 = getViewItems(view).filter(function (it) { return it.id !== tempId; });
+        setViewItems(view, arr2);
+        input.value = text;
+        alert('追加に失敗しました: ' + err.message);
+      })
+      .then(function () {
+        addBusy = false;
+        document.getElementById('addBtn').disabled = false;
+        document.getElementById('newItemText').disabled = false;
+      });
+  });
 }
 
 document.getElementById('viewSwitchBtn').addEventListener('click', function () {
