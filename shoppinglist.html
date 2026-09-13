@@ -219,16 +219,42 @@ function rawApiCall(body) {
     });
 }
 
+// LIFF's ID token is fetched once at liff.init() and is never refreshed by the SDK on its
+// own. If the mini app is left open long enough, that cached token expires and the server's
+// LINE verification call starts failing with "IdToken expired" — every action (add, toggle,
+// comment, etc.) would otherwise show a generic, confusing failure forever until the user
+// manually reloads. Detect that specific server error and recover by reloading the page,
+// which re-runs liff.init() and obtains a fresh token automatically.
+var tokenExpiredReloadTriggered = false;
+function isTokenExpiredError(err) {
+  var msg = String((err && err.message) || '');
+  return msg.indexOf('IdToken expired') !== -1 || msg.indexOf('IDトークン検証に失敗') !== -1;
+}
+function reloadForExpiredToken() {
+  if (tokenExpiredReloadTriggered) return;
+  tokenExpiredReloadTriggered = true;
+  alert('LINEのログイン有効期限が切れました。画面を再読み込みします。');
+  location.reload();
+}
+
 // Wrapper used by all callers. Read-only "get" actions are safe to silently retry once
 // on the transient HTML-instead-of-JSON glitch, since repeating a read has no side effects.
 // Mutating actions are NOT retried here (that could double-submit); see each handler below.
 function callApi(body) {
   var isReadOnly = body.action === 'shopping_list_get' || body.action === 'shopping_list_get_archived';
   return rawApiCall(body).catch(function (err) {
+    if (isTokenExpiredError(err)) {
+      reloadForExpiredToken();
+      return new Promise(function () {}); // page is reloading; never resolve this call
+    }
     if (isReadOnly && err.invalidResponse) {
       return new Promise(function (resolve) { setTimeout(resolve, 500); })
         .then(function () { return rawApiCall(body); })
         .catch(function (err2) {
+          if (isTokenExpiredError(err2)) {
+            reloadForExpiredToken();
+            return new Promise(function () {});
+          }
           if (err2.invalidResponse) {
             throw new Error('通信が不安定なため読み込めませんでした。もう一度お試しください。');
           }
