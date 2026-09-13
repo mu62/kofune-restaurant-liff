@@ -826,7 +826,7 @@ function cssEscape(s) {
 // コメント入力欄で「@」に続けて入力すると、グループ内メンバーの候補を出す。
 // 選択すると「@表示名 」がその場に挿入され、送信時にLINEグループへメンション付きで通知される。
 function loadGroupMembers() {
-  if (!groupId) return; // グループ以外(個人チャット等)ではメンション候補は出さない
+  // メンション候補はスタッフマスタから取得するため、個人チャット(groupIdなし)でも取得する
   callApi({ action: 'shopping_list_group_members' })
     .then(function (json) { groupMembers = json.members || []; })
     .catch(function () { /* メンション候補が取れなくても通常の利用に支障はないため無視する */ });
