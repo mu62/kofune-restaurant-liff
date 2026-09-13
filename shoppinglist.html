@@ -72,6 +72,8 @@
     transition: opacity 0.15s ease;
   }
   .done-heading { margin: 18px 0 8px; padding-top: 12px; border-top: 1px solid #e6ded1; }    .done-heading-title { font-size: 14px; font-weight: bold; color: #6b6259; margin: 0 0 4px; }
+  .unfinished-heading { margin: 0 0 8px; }
+  .unfinished-heading-title { font-size: 14px; font-weight: bold; color: #6b6259; margin: 0; }
   .item-card.done .item-text { text-decoration: line-through; color: #a39a8d; }
   .item-card.busy { opacity: 0.65; }
   .item-card.archived-card {
@@ -114,6 +116,14 @@
     padding: 7px 10px; font-size: 12px; border: none; border-radius: 6px; background: #ece6d9; color: #4a4239;
   }
   .comment-toggle { font-size: 12px; color: #6b6259; margin-top: 8px; background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
+
+  .mention-dropdown {
+    position: fixed; z-index: 50; background: #fff; border: 1px solid #d8d1c6; border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.15); max-height: 160px; overflow-y: auto; font-size: 13px;
+  }
+  .mention-dropdown[hidden] { display: none; }
+  .mention-option { padding: 8px 10px; cursor: pointer; }
+  .mention-option:hover, .mention-option.active { background: #f3efe6; }
 </style>
 </head>
 <body>
@@ -144,6 +154,8 @@
   <div id="empty" hidden></div>
 </div>
 
+<div id="mentionDropdown" class="mention-dropdown" hidden></div>
+
 <script>
 var LIFF_ID = '2011570621-8kfLQoey';
 var WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
@@ -155,6 +167,20 @@ var currentView = 'active'; // 'active' | 'archived'
 var openComments = {}; // itemId -> true if comment box expanded (kept across re-renders)
 var editingCommentId = null; // commentId currently being edited inline, or null
 var listRequestSeq = 0; // guards against applying an out-of-date GET response after a newer one
+
+// ---- @メンション機能の状態 ----
+var groupMembers = []; // [{userId, displayName, pictureUrl}] グループ内メンバー一覧(候補用)
+var pendingMentions = {}; // itemId -> [{userId, displayName}] 送信前のコメントに含まれる@メンション
+var mentionState = null; // { itemId, input, atIndex } ドロップダウン表示中のみセット
+
+// ---- コメントへのディープリンク(LINE通知の「アイテムに飛べるURL」用) ----
+// https://liff.line.me/{LIFF_ID}?itemId=xxx で開かれた場合、そのアイテムのコメント欄を開いてスクロールする。
+var deepLinkItemId = (function () {
+  try {
+    return new URLSearchParams(location.search).get('itemId') || null;
+  } catch (e) { return null; }
+})();
+var deepLinkArchivedTried = false;
 
 // ---------------------------------------------------------------------------------------
 // SYNC DESIGN
@@ -200,6 +226,31 @@ function setViewItems(view, items) {
   if (view === currentView) {
     currentItems = items;
     renderList(items);
+    if (deepLinkItemId) tryHandleDeepLink();
+  }
+}
+
+// LINEのメンション通知から開かれた場合、対象アイテムのコメント欄を開いてスクロールする。
+// アクティブ一覧に見当たらなければ、一度だけ削除済み一覧を試す(アーカイブ済みアイテムへのコメントの場合)。
+function tryHandleDeepLink() {
+  if (!deepLinkItemId) return;
+  var idx = findIndexInView(currentView, deepLinkItemId);
+  if (idx !== -1) {
+    var targetId = deepLinkItemId;
+    deepLinkItemId = null;
+    openComments[targetId] = true;
+    renderList(getViewItems(currentView));
+    var el = document.querySelector('[data-comments-for="' + cssEscape(targetId) + '"]');
+    if (el) {
+      el.hidden = false;
+      var card = el.closest('.item-card');
+      if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    return;
+  }
+  if (currentView === 'active' && !deepLinkArchivedTried) {
+    deepLinkArchivedTried = true;
+    switchTab('archived');
   }
 }
 function findIndexInView(view, id) {
@@ -412,9 +463,10 @@ function renderList(items) {
   }
   emptyEl.hidden = true;
 
-  var doneHeadingInserted = false; items.forEach(function (it) {
+  var doneHeadingInserted = false; var unfinishedHeadingInserted = false; items.forEach(function (it) {
     var busy = !!it.busy;
     var isArchivedView = currentView === 'archived';
+    if (!isArchivedView && it.status !== 'done' && !unfinishedHeadingInserted) { unfinishedHeadingInserted = true; var unfinishedHeading = document.createElement('div'); unfinishedHeading.className = 'unfinished-heading'; unfinishedHeading.innerHTML = '<div class="unfinished-heading-title">未完了</div>'; listArea.appendChild(unfinishedHeading); }
     if (!isArchivedView && it.status === 'done' && !doneHeadingInserted) { doneHeadingInserted = true; var doneHeading = document.createElement('div'); doneHeading.className = 'done-heading'; doneHeading.innerHTML = '<div class="done-heading-title">完了済</div>' + '<div class="done-heading-note">完了してから14日経過すると自動的に削除されます。</div>'; listArea.appendChild(doneHeading); } var card = document.createElement('div');
     card.className = 'item-card' + (it.status === 'done' ? ' done' : '') + (busy ? ' busy' : '') + (isArchivedView ? ' archived-card' : '');
 
@@ -624,6 +676,15 @@ function handleListAreaClick(e) {
     var text = input ? input.value.trim() : '';
     if (!text) { alert('コメント内容を入力してください'); return; }
 
+    // @メンションで選択されたメンバーのうち、最終的な本文にまだ「@表示名」が
+    // 残っているものだけを通知対象にする(選択後に手で消された分は対象外)。
+    var mentions = (pendingMentions[id] || []).filter(function (m) {
+      return text.indexOf('@' + m.displayName) !== -1;
+    });
+    var mentionUserIds = mentions.map(function (m) { return m.userId; });
+    delete pendingMentions[id];
+    closeMentionDropdown();
+
     openComments[id] = true; // keep the box open across the re-render this triggers
 
     // Optimistic UI: append the comment locally and re-render immediately. A brand new
@@ -642,7 +703,7 @@ function handleListAreaClick(e) {
     if (input) input.value = '';
 
     enqueue(function () {
-      return callApi({ action: 'shopping_list_comment', itemId: id, comment: text })
+      return callApi({ action: 'shopping_list_comment', itemId: id, comment: text, mentionUserIds: mentionUserIds })
         .then(function (json) {
           setViewItems(view, json.items);
         })
@@ -761,6 +822,98 @@ function cssEscape(s) {
   return String(s).replace(/["\\]/g, '\\$&');
 }
 
+// ---- @メンション機能 ----
+// コメント入力欄で「@」に続けて入力すると、グループ内メンバーの候補を出す。
+// 選択すると「@表示名 」がその場に挿入され、送信時にLINEグループへメンション付きで通知される。
+function loadGroupMembers() {
+  if (!groupId) return; // グループ以外(個人チャット等)ではメンション候補は出さない
+  callApi({ action: 'shopping_list_group_members' })
+    .then(function (json) { groupMembers = json.members || []; })
+    .catch(function () { /* メンション候補が取れなくても通常の利用に支障はないため無視する */ });
+}
+
+function closeMentionDropdown() {
+  mentionState = null;
+  var dd = document.getElementById('mentionDropdown');
+  dd.hidden = true;
+  dd.innerHTML = '';
+  dd.__matches = null;
+}
+
+function openMentionDropdown(input, itemId, atIndex, query) {
+  var q = query.toLowerCase();
+  var matches = groupMembers.filter(function (m) {
+    return m.displayName && m.displayName.toLowerCase().indexOf(q) !== -1;
+  }).slice(0, 8);
+  var dd = document.getElementById('mentionDropdown');
+  if (matches.length === 0) { closeMentionDropdown(); return; }
+  mentionState = { itemId: itemId, input: input, atIndex: atIndex };
+  dd.__matches = matches;
+  dd.innerHTML = matches.map(function (m, i) {
+    return '<div class="mention-option' + (i === 0 ? ' active' : '') + '" data-idx="' + i + '">' + esc(m.displayName) + '</div>';
+  }).join('');
+  var rect = input.getBoundingClientRect();
+  dd.style.left = Math.max(8, rect.left) + 'px';
+  dd.style.top = (rect.bottom + 4) + 'px';
+  dd.style.width = rect.width + 'px';
+  dd.hidden = false;
+}
+
+function selectMention(idx) {
+  var dd = document.getElementById('mentionDropdown');
+  var m = dd.__matches && dd.__matches[idx];
+  if (!m || !mentionState) return;
+  var input = mentionState.input;
+  var itemId = mentionState.itemId;
+  var atIndex = mentionState.atIndex;
+  var caret = input.selectionStart;
+  var before = input.value.slice(0, atIndex);
+  var after = input.value.slice(caret);
+  var inserted = '@' + m.displayName + ' ';
+  input.value = before + inserted + after;
+  var newCaret = (before + inserted).length;
+  input.focus();
+  input.setSelectionRange(newCaret, newCaret);
+
+  if (!pendingMentions[itemId]) pendingMentions[itemId] = [];
+  if (!pendingMentions[itemId].some(function (x) { return x.userId === m.userId; })) {
+    pendingMentions[itemId].push({ userId: m.userId, displayName: m.displayName });
+  }
+  closeMentionDropdown();
+}
+
+document.getElementById('listArea').addEventListener('input', function (e) {
+  if (!e.target.hasAttribute || !e.target.hasAttribute('data-comment-input')) return;
+  var input = e.target;
+  var itemId = input.getAttribute('data-comment-input');
+  var caret = input.selectionStart;
+  var textBeforeCaret = input.value.slice(0, caret);
+  var match = /(?:^|\s)@([^\s@]*)$/.exec(textBeforeCaret);
+  if (match && groupMembers.length) {
+    var atIndex = textBeforeCaret.length - match[1].length - 1; // '@'の位置
+    openMentionDropdown(input, itemId, atIndex, match[1]);
+  } else {
+    closeMentionDropdown();
+  }
+});
+
+document.getElementById('listArea').addEventListener('focusout', function (e) {
+  if (e.target.hasAttribute && e.target.hasAttribute('data-comment-input')) {
+    // ドロップダウンの選択クリックより先にblurが発生するため、少し待ってから閉じる
+    var input = e.target;
+    setTimeout(function () {
+      if (mentionState && mentionState.input === input) closeMentionDropdown();
+    }, 150);
+  }
+});
+
+document.getElementById('mentionDropdown').addEventListener('mousedown', function (e) {
+  var opt = e.target.closest && e.target.closest('.mention-option');
+  if (!opt) return;
+  e.preventDefault(); // input側のblurより先に発火させ、フォーカスを奪わないようにする
+  selectMention(Number(opt.getAttribute('data-idx')));
+});
+
 var addBusy = false; // guards the add button itself against a rapid double-tap creating duplicates
 
 function handleAdd() {
@@ -825,6 +978,14 @@ document.getElementById('newItemText').addEventListener('keydown', function (e) 
 });
 document.getElementById('listArea').addEventListener('click', handleListAreaClick);
 document.getElementById('listArea').addEventListener('keydown', function (e) {
+  if (mentionState && e.target === mentionState.input) {
+    if (e.key === 'Escape') { closeMentionDropdown(); return; }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      selectMention(0);
+      return;
+    }
+  }
   if (e.key !== 'Enter' || isComposingEvent(e) || !e.target) return;
   if (e.target.hasAttribute('data-comment-input')) {
     var id = e.target.getAttribute('data-comment-input');
@@ -859,6 +1020,7 @@ liff.init({ liffId: LIFF_ID }).then(function () {
   document.getElementById('loading').hidden = true;
   document.getElementById('app').hidden = false;
   loadList();
+  loadGroupMembers();
 }).catch(function (err) {
   showError('LIFFの初期化に失敗しました: ' + err.message);
 });
@@ -866,4 +1028,3 @@ liff.init({ liffId: LIFF_ID }).then(function () {
 </body>
 </html>
 <!-- redeploy trigger -->
-
