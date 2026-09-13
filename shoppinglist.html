@@ -376,7 +376,7 @@ function loadList() {
     setTabsDisabled(true);
     listArea.classList.add('is-loading');
     emptyEl.hidden = true;
-    if (!listArea.children.length) loadingEl.hidden = false;
+    listArea.innerHTML = ''; loadingEl.hidden = false;
   }
 
   enqueue(function () {
