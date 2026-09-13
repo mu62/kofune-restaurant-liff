@@ -141,7 +141,7 @@
 
   <div class="archived-banner" id="archivedBanner" hidden>
     <span class="badge">削除済み</span>
-    <span>ここは削除済みアイテムの一覧です。買い物リストには表示されません。「復元」で元に戻せます。</span>
+    <span>ここは削除済みアイテムの一覧です。買い物リストには表示されません。「復元」で元に戻せます。削除から14日経つと自動的に完全に削除されます。</span>
   </div>
 
   <div class="add-box" id="addBox">
@@ -396,7 +396,7 @@ function applyViewChrome(view) {
   document.body.classList.toggle('archived-mode', isArchived);
   document.getElementById('pageTitle').textContent = isArchived ? '🗑 削除済みリスト' : '🛒 買い物リスト';
   document.getElementById('pageLead').textContent = isArchived
-    ? '削除されたアイテムの一覧です。買い物リスト本体には表示されません。'
+    ? '削除されたアイテムの一覧です。買い物リスト本体には表示されません。削除から14日経過すると自動的に完全削除されます。'
     : 'メンバー全員で共有できる買い物リストです。追加・完了・コメント・削除ができます。';
 }
 
@@ -609,7 +609,7 @@ function handleListAreaClick(e) {
     enqueue(function () {
       return callApi({ action: 'shopping_list_archive', itemId: id })
         .then(function (json) {
-          itemsCache.archived = null; // the archived tab now has a new item; force a fresh fetch there
+          // 削除済みタブもアクティブタブと同じstale-while-revalidate方式のため、ここで強制無効化しない
           setViewItems(view, json.items); // server's active list no longer includes this item
         })
         .catch(function (err) {
@@ -641,7 +641,7 @@ function handleListAreaClick(e) {
     enqueue(function () {
       return callApi({ action: 'shopping_list_restore', itemId: id })
         .then(function (json) {
-          itemsCache.active = null; // the active tab now has a new item; force a fresh fetch there
+          // 同上の理由でここも強制無効化しない
           setViewItems(view, json.items);
         })
         .catch(function (err) {
