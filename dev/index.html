@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>KOFUNE 飲食店会員登録</title>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #faf8f5;
+    --fg: #2a2420;
+    --accent: #1f7a4d;
+    --accent-dark: #175c3a;
+    --border: #ddd5cb;
+    --danger: #c0392b;
+    --muted: #7a7168;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    padding: 20px 16px 48px;
+  }
+  .wrap { max-width: 480px; margin: 0 auto; }
+  h1 {
+    font-size: 20px;
+    margin: 8px 0 4px;
+  }
+  .lead {
+    font-size: 13px;
+    color: var(--muted);
+    margin: 0 0 20px;
+    line-height: 1.6;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .field { margin-bottom: 18px; }
+  label.field-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  input[type="email"], input[type="text"], input[type="url"], input[type="date"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--fg);
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .choice-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    font-size: 14px;
+    border-bottom: 1px solid #f1ece5;
+  }
+  .choice-row:last-child { border-bottom: none; }
+  .choice-row input { width: 18px; height: 18px; flex-shrink: 0; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .agree-box {
+    background: #f6f3ee;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .agree-box .choice-row { border-bottom: none; align-items: flex-start; }
+  .birthdate-calendar-toggle {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 7px 12px;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  input[type="date"] { margin-top: 8px; }
+  .age-error {
+    font-size: 12.5px;
+    color: var(--danger);
+    margin-top: 6px;
+    display: none;
+  }
+  button#submitBtn {
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: 10px;
+    margin-top: 8px;
+    cursor: pointer;
+  }
+  button#submitBtn:disabled { background: #b9b2a8; }
+  button#submitBtn:active:not(:disabled) { background: var(--accent-dark); }
+  #status {
+    text-align: center;
+    padding: 60px 16px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  #errorMsg {
+    color: var(--danger);
+    font-size: 13px;
+    margin-top: 12px;
+    display: none;
+  }
+  #doneScreen {
+    display: none;
+    text-align: center;
+    padding: 40px 16px;
+  }
+  #doneScreen .icon { font-size: 40px; margin-bottom: 12px; }
+  #doneScreen p { font-size: 14px; line-height: 1.7; color: var(--fg); }
+  #alreadyScreen, #pendingScreen {
+    display: none;
+    text-align: center;
+    padding: 40px 16px;
+  }
+  #alreadyScreen .icon, #pendingScreen .icon { font-size: 40px; margin-bottom: 12px; }
+  #alreadyScreen p, #pendingScreen p { font-size: 14px; line-height: 1.7; color: var(--fg); }
+  #alreadyScreen a { color: var(--accent); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div style="position:sticky;top:0;z-index:99999;background:#ff5252;color:#fff;text-align:center;font-weight:bold;padding:6px 8px;font-size:13px;">🛠 開発版（DEV）- 本番環境ではありません</div>
+<div class="wrap">
+  <div id="status">読み込み中...</div>
+
+  <div id="formScreen" hidden>
+    <h1>飲食店会員登録</h1>
+    <p class="lead">卸価格でのご購入には審査が必要です。以下の内容をご入力のうえ送信してください。審査結果はこのLINEアカウントにお知らせします。</p>
+
+    <form id="appForm" class="card">
+      <div class="field">
+        <label class="field-label" for="email">アカウント登録メールアドレス <span style="color:var(--danger)">*</span></label>
+        <input type="email" id="email" name="email" required placeholder="you@example.com">
+      </div>
+
+      <div class="field">
+        <label class="field-label">お店での役割（複数選択可） <span style="color:var(--danger)">*</span></label>
+        <div id="rolesGroup">
+          <label class="choice-row"><input type="checkbox" name="roles" value="ドリンク担当"> ドリンク担当</label>
+          <label class="choice-row"><input type="checkbox" name="roles" value="シェフ・料理長"> シェフ・料理長</label>
+          <label class="choice-row"><input type="checkbox" name="roles" value="店長"> 店長</label>
+          <label class="choice-row"><input type="checkbox" name="roles" value="オーナー"> オーナー</label>
+          <label class="choice-row"><input type="checkbox" name="roles" value="その他"> その他</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="shopUrl">お店のURL（公式HP・SNS・GoogleMap・グルメサイト等） <span style="color:var(--danger)">*</span></label>
+        <input type="url" id="shopUrl" name="shopUrl" required placeholder="https://...">
+      </div>
+
+      <div class="field">
+        <label class="field-label">月の発注数量（目安） <span style="color:var(--danger)">*</span></label>
+        <div id="volumeGroup">
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="未定" required> 未定</label>
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="1〜2本"> 1〜2本</label>
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="3〜4本"> 3〜4本</label>
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="5〜9本"> 5〜9本</label>
+          <label class="choice-row"><input type="radio" name="monthlyVolume" value="10本以上"> 10本以上</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="birthdateTextInput">発注者様の生年月日 <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="birthdateTextInput" autocomplete="bday" placeholder="例：1990/01/15" maxlength="12">
+        <button type="button" id="birthdateCalendarToggle" class="birthdate-calendar-toggle">📅 カレンダーで選択</button>
+        <input type="date" id="birthdateInput" hidden>
+        <div class="hint">「1990/01/15」のように入力するか、「カレンダーで選択」からもお選びいただけます。ご登録いただくと、初回のご発注時から生年月日の入力が省略されます。</div>
+        <div id="ageError" class="age-error">20歳未満の方はご登録いただけません。</div>
+      </div>
+
+      <div class="field agree-box">
+        <label class="choice-row">
+          <input type="checkbox" id="agree" name="agree" required>
+          <span>卸売商品は自店舗のお客様への提供に限り、個人消費や第三者への転売は行わないことに同意します。なお、内容によっては登録をお断りする場合があります。</span>
+        </label>
+      </div>
+
+      <button type="submit" id="submitBtn">送信する</button>
+      <div id="errorMsg"></div>
+    </form>
+  </div>
+
+  <div id="doneScreen">
+    <div class="icon">✅</div>
+    <p id="doneMessage">審査依頼を受け付けました。結果はこのLINEアカウントにお知らせします。</p>
+  </div>
+
+  <div id="alreadyScreen">
+    <div class="icon">✅</div>
+    <p>既に飲食店会員として登録済みです。卸価格でのご注文は<a href="https://saketen.62the.one/">オンラインストア</a>からどうぞ。</p>
+  </div>
+
+  <div id="pendingScreen">
+    <div class="icon">⏳</div>
+    <p>現在、飲食店会員登録の審査中です。結果はこちらのLINEアカウントにお知らせします。</p>
+  </div>
+</div>
+
+<script>
+// GASのWeb App（doPost）エントポイント。飲食店会員登録LIFF専用のルーティングが実装済み。
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbw1ckwo1CRcNyVLnObKNjfC4QAeda8QI9bp2wZKkqSp/dev';
+const LIFF_ID = 'DEV_LIFF_ID_REGISTRATION_PLACEHOLDER';
+
+const statusEl = document.getElementById('status');
+const formScreen = document.getElementById('formScreen');
+const doneScreen = document.getElementById('doneScreen');
+const alreadyScreen = document.getElementById('alreadyScreen');
+const pendingScreen = document.getElementById('pendingScreen');
+const appForm = document.getElementById('appForm');
+const submitBtn = document.getElementById('submitBtn');
+const errorMsg = document.getElementById('errorMsg');
+const birthdateTextInput = document.getElementById('birthdateTextInput');
+  const birthdateInput = document.getElementById('birthdateInput');
+  const birthdateCalendarToggle = document.getElementById('birthdateCalendarToggle');
+  const ageError = document.getElementById('ageError');
+
+  (function setBirthdateMax() {
+      const today = new Date();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      birthdateInput.max = today.getFullYear() + '-' + mm + '-' + dd;
+  })();
+  function normalizeBirthdateInput(str) {
+      if (!str || typeof str !== 'string') return null;
+      let s = str.trim().replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+      let m = s.match(/^(\d{4})[\/\-.年](\d{1,2})[\/\-.月]?(\d{1,2})日?$/);
+      if (!m) m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+      if (!m) return null;
+      const y = m[1], mo = ('0' + parseInt(m[2], 10)).slice(-2), d = ('0' + parseInt(m[3], 10)).slice(-2);
+      if (mo === '00' || d === '00' || parseInt(mo, 10) > 12 || parseInt(d, 10) > 31) return null;
+      return y + '-' + mo + '-' + d;
+  }
+
+  function calculateAgeFromBirthdate(birthdateStr) {
+      const normalized = normalizeBirthdateInput(birthdateStr);
+      if (!normalized) return null;
+      const parts = normalized.split('-');
+      const y = parseInt(parts[0], 10), mo = parseInt(parts[1], 10), d = parseInt(parts[2], 10);
+      const birth = new Date(y, mo - 1, d);
+      if (birth.getFullYear() !== y || birth.getMonth() !== mo - 1 || birth.getDate() !== d) return null;
+      const today = new Date();
+      if (birth > today) return null;
+      let age = today.getFullYear() - birth.getFullYear();
+      const hadBirthdayThisYear = (today.getMonth() > birth.getMonth()) ||
+            (today.getMonth() === birth.getMonth() && today.getDate() >= birth.getDate());
+      if (!hadBirthdayThisYear) age--;
+      if (age < 0 || age > 130) return null;
+      return age;
+  }
+  function validateBirthdateField() {
+      const age = calculateAgeFromBirthdate(birthdateTextInput.value);
+      const invalid = age !== null && age < 20;
+      ageError.style.display = invalid ? 'block' : 'none';
+      return age;
+  }
+
+  birthdateTextInput.addEventListener('input', function () {
+      clearError();
+      validateBirthdateField();
+  });
+  birthdateTextInput.addEventListener('blur', function () {
+      const normalized = normalizeBirthdateInput(birthdateTextInput.value);
+      if (normalized) {
+            const p = normalized.split('-');
+            birthdateTextInput.value = p[0] + '/' + p[1] + '/' + p[2];
+            birthdateInput.value = normalized;
+      }
+  });
+  birthdateCalendarToggle.addEventListener('click', function () {
+      birthdateInput.hidden = !birthdateInput.hidden;
+      if (!birthdateInput.hidden && birthdateInput.showPicker) {
+            try { birthdateInput.showPicker(); } catch (e) {}
+      }
+  });
+  birthdateInput.addEventListener('change', function () {
+      if (birthdateInput.value) {
+            const p = birthdateInput.value.split('-');
+            birthdateTextInput.value = p[0] + '/' + p[1] + '/' + p[2];
+      }
+      clearError();
+      validateBirthdateField();
+  });
+  
+
+function showError(text) {
+  errorMsg.textContent = text;
+  errorMsg.style.display = 'block';
+}
+
+function clearError() {
+  errorMsg.style.display = 'none';
+  errorMsg.textContent = '';
+}
+
+async function init() {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) {
+      liff.login();
+      return; // login() redirects; init() will re-run after redirect back
+    }
+
+    const idToken = liff.getIDToken();
+    if (!idToken) {
+      statusEl.hidden = true;
+      formScreen.hidden = false;
+      return;
+    }
+
+    try {
+      const res = await fetch(BACKEND_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'checkStatus', idToken: idToken })
+      });
+      const data = await res.json();
+      const memberStatus = (data && data.ok) ? data.status : 'none';
+
+      statusEl.hidden = true;
+      if (memberStatus === 'approved') {
+        alreadyScreen.style.display = 'block';
+      } else if (memberStatus === 'pending') {
+        pendingScreen.style.display = 'block';
+      } else {
+        formScreen.hidden = false;
+      }
+    } catch (checkErr) {
+      // ステータス確認に失敗した場合は通常の登録フォームを表示する（フェイルオープン）
+      console.error('checkStatus failed', checkErr);
+      statusEl.hidden = true;
+      formScreen.hidden = false;
+    }
+  } catch (err) {
+    statusEl.textContent = '読み込みに失敗しました。時間をおいて再度お試しください。';
+    console.error('liff.init failed', err);
+  }
+}
+
+appForm.addEventListener('submit', async function (e) {
+  e.preventDefault();
+  clearError();
+
+  const email = document.getElementById('email').value.trim();
+  const shopUrl = document.getElementById('shopUrl').value.trim();
+  const monthlyVolumeEl = appForm.querySelector('input[name="monthlyVolume"]:checked');
+  const roles = Array.from(appForm.querySelectorAll('input[name="roles"]:checked')).map(function (el) { return el.value; });
+  const agree = document.getElementById('agree').checked;
+  const birthdate = normalizeBirthdateInput(birthdateTextInput.value);
+
+  if (!email || !shopUrl || !monthlyVolumeEl || roles.length === 0 || !agree) {
+    showError('未入力の項目があります。ご確認ください。');
+    return;
+  }
+
+  if (!birthdate) {
+    showError('生年月日を正しい形式で入力してください（例：1990/01/15）。');
+    return;
+  }
+
+  const age = calculateAgeFromBirthdate(birthdateTextInput.value);
+  if (age === null) {
+    showError('生年月日を正しく入力してください。');
+    return;
+  }
+  if (age < 20) {
+    return; // ageError already shown
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = '送信中...';
+
+  try {
+    const idToken = liff.getIDToken();
+    if (!idToken) {
+      throw new Error('LINEログイン情報を取得できませんでした。');
+    }
+
+    const res = await fetch(BACKEND_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({
+        idToken: idToken,
+        email: email,
+        roles: roles,
+        shopUrl: shopUrl,
+        monthlyVolume: monthlyVolumeEl.value,
+        birthdate: birthdate,
+        agree: agree
+      })
+    });
+
+    const data = await res.json();
+
+    if (data && data.ok) {
+      formScreen.hidden = true;
+      doneScreen.style.display = 'block';
+    } else {
+      showError((data && data.error) || '送信に失敗しました。時間をおいて再度お試しください。');
+      submitBtn.disabled = false;
+      submitBtn.textContent = '送信する';
+    }
+  } catch (err) {
+    console.error('submit failed', err);
+    showError('通信エラーが発生しました。電波の良い場所で再度お試しください。');
+    submitBtn.disabled = false;
+    submitBtn.textContent = '送信する';
+  }
+});
+
+init();
+</script>
+</body>
+</html>
