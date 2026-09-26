@@ -1,0 +1,1120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>買い物リスト</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 16px 80px;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    background: #faf8f4; color: #2a2420;
+    transition: background 0.15s ease;
+  }
+  body.archived-mode { background: #f7efec; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.lead { font-size: 13px; color: #6b6259; margin: 0 0 16px; line-height: 1.5; }
+  .archived-banner {
+    display: flex; align-items: center; gap: 8px;
+    background: #f3e3dd; border: 1px solid #e3c4b8; border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 14px;
+    font-size: 12.5px; color: #8a4a35; line-height: 1.5;
+  }
+  .archived-banner[hidden] { display: none; }
+  .archived-banner .badge {
+    flex-shrink: 0; font-size: 11px; font-weight: bold; color: #fff; background: #b3432b;
+    border-radius: 999px; padding: 3px 9px;
+  }
+  #loading, #error { padding: 40px 0; text-align: center; color: #6b6259; font-size: 14px; }
+  #error { color: #b3432b; white-space: pre-line; line-height: 1.7; }
+  #login { padding: 32px 0; text-align: center; font-size: 14px; color: #4a423b; line-height: 1.7; }
+  #login[hidden] { display: none; }
+  #gsiButton { display: inline-block; margin-top: 16px; min-height: 44px; }
+  .account-bar { font-size: 12px; color: #6b6259; margin: -8px 0 12px; }
+  .account-bar button { font-size: 12px; background: none; border: none; color: #6b6259; text-decoration: underline; padding: 0; margin-left: 6px; cursor: pointer; }
+
+  .spinner {
+    display: inline-block;
+    width: 18px; height: 18px;
+    border: 3px solid #e6ded1;
+    border-top-color: #1a3a2e;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .view-switch-wrap { text-align: right; margin-bottom: 10px; }
+  .view-switch {
+    font-size: 12.5px; color: #6b6259; background: none; border: none; padding: 4px 2px; cursor: pointer;
+    text-decoration: underline;
+  }
+  .view-switch:disabled { opacity: 0.6; cursor: default; }
+
+  .add-box { display: flex; gap: 8px; margin-bottom: 16px; }
+  .add-box[hidden] { display: none; }
+  .add-box input {
+    flex: 1; padding: 10px; font-size: 15px; border: 1px solid #d8d1c6; border-radius: 8px; background: #fff;
+  }
+  .add-box button {
+    padding: 10px 16px; font-size: 14px; font-weight: bold; border: none; border-radius: 8px;
+    background: #1a3a2e; color: #fff; white-space: nowrap;
+  }
+  .add-box button:disabled { background: #b7c2bc; }
+
+  #empty, #listLoading { padding: 32px 0; text-align: center; color: #a39a8d; font-size: 13.5px; }
+
+  #listArea { min-height: 40px; opacity: 1; transition: opacity 0.12s ease; }
+  #listArea.is-loading { opacity: 0.4; }
+
+  .item-card {
+    background: #fff; border: 1px solid #e6ded1; border-radius: 10px; padding: 12px; margin-bottom: 10px;
+    animation: fadeIn 0.15s ease;
+    transition: opacity 0.15s ease;
+  }
+  .done-heading { margin: 18px 0 8px; padding-top: 12px; border-top: 1px solid #e6ded1; }    .done-heading-title { font-size: 14px; font-weight: bold; color: #6b6259; margin: 0 0 4px; }
+  .unfinished-heading { margin: 0 0 8px; }
+  .unfinished-heading-title { font-size: 14px; font-weight: bold; color: #6b6259; margin: 0; }
+  .item-card.done .item-text { text-decoration: line-through; color: #a39a8d; }
+  .item-card.busy { opacity: 0.65; }
+  .item-card.archived-card {
+    background: #fbf4f1; border-color: #e6cec5; border-style: dashed;
+  }
+  .item-card.archived-card .item-text { color: #7a6a62; }
+  .item-row { display: flex; align-items: flex-start; gap: 10px; }
+  .item-row input[type="checkbox"] { width: 20px; height: 20px; margin-top: 2px; flex-shrink: 0; }
+  .item-main { flex: 1; min-width: 0; }
+  .item-text { font-size: 15.5px; font-weight: bold; word-break: break-word; }
+  .item-meta { font-size: 11.5px; color: #a39a8d; margin-top: 2px; }
+  .item-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .icon-btn {
+    border: none; background: none; padding: 4px 6px; font-size: 16px; cursor: pointer; color: #a39a8d;
+    line-height: 1;
+  }
+  .icon-btn.restore-btn { font-size: 13px; font-weight: bold; color: #1a3a2e; border: 1px solid #1a3a2e; border-radius: 6px; padding: 6px 10px; }
+  button:disabled, input:disabled { opacity: 0.5; cursor: default; }
+
+  .comments { margin-top: 10px; padding-top: 10px; border-top: 1px solid #f0ebe0; }
+  .comment-line { font-size: 12.5px; color: #4a4239; margin-bottom: 4px; line-height: 1.4; display: flex; align-items: flex-start; gap: 6px; }
+  .comment-line .comment-body { flex: 1; min-width: 0; }
+  .comment-line .author { font-weight: bold; color: #2a2420; }
+  .comment-mini-actions { flex-shrink: 0; white-space: nowrap; }
+  .comment-mini-btn {
+    border: none; background: none; padding: 0 2px; font-size: 11px; color: #a39a8d; cursor: pointer; text-decoration: underline;
+  }
+  .comment-edit-box { display: flex; gap: 6px; margin-bottom: 6px; }
+  .comment-edit-box input {
+    flex: 1; padding: 6px 8px; font-size: 12.5px; border: 1px solid #d8d1c6; border-radius: 6px; background: #fdfcfa;
+  }
+  .comment-edit-box button {
+    padding: 6px 8px; font-size: 11.5px; border: none; border-radius: 6px; background: #ece6d9; color: #4a4239; white-space: nowrap;
+  }
+  .comment-add { display: flex; gap: 6px; margin-top: 6px; }
+  .comment-add input {
+    flex: 1; padding: 7px 8px; font-size: 12.5px; border: 1px solid #d8d1c6; border-radius: 6px; background: #fdfcfa;
+  }
+  .comment-add button {
+    padding: 7px 10px; font-size: 12px; border: none; border-radius: 6px; background: #ece6d9; color: #4a4239;
+  }
+  .comment-toggle { font-size: 12px; color: #6b6259; margin-top: 8px; background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline; }
+
+  .mention-dropdown {
+    position: fixed; z-index: 50; background: #fff; border: 1px solid #d8d1c6; border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.15); max-height: 160px; overflow-y: auto; font-size: 13px;
+  }
+  .mention-dropdown[hidden] { display: none; }
+  .mention-option { padding: 8px 10px; cursor: pointer; }
+  .mention-option:hover, .mention-option.active { background: #f3efe6; }
+</style>
+</head>
+<body>
+
+<h1 id="pageTitle">🛒 買い物リスト</h1>
+<p class="lead" id="pageLead">メンバー全員で共有できる買い物リストです。追加・完了・コメント・削除ができます。</p>
+<div class="account-bar" id="accountBar" hidden><span id="accountName"></span><button type="button" id="switchAccountBtn">別のアカウントでログイン</button></div>
+
+<div id="login" hidden>
+  スタッフ用の買い物リストです。<br>Googleアカウントでログインしてください。
+  <div><div id="gsiButton"></div></div>
+</div>
+
+<div id="loading"><span class="spinner"></span>読み込み中...</div>
+<div id="error" hidden></div>
+
+<div id="app" hidden>
+  <div class="view-switch-wrap">
+    <button class="view-switch" id="viewSwitchBtn" type="button">🗑 削除済みを見る</button>
+  </div>
+
+  <div class="archived-banner" id="archivedBanner" hidden>
+    <span class="badge">削除済み</span>
+    <span>ここは削除済みアイテムの一覧です。買い物リストには表示されません。「復元」で元に戻せます。削除から14日経つと自動的に完全に削除されます。</span>
+  </div>
+
+  <div class="add-box" id="addBox">
+    <input id="newItemText" type="text" placeholder="品名を入力（例：卵 2個、牛乳 1本）" maxlength="200">
+    <button id="addBtn" type="button">追加</button>
+  </div>
+
+  <div id="listLoading" hidden><span class="spinner"></span>読み込み中...</div>
+  <div id="listArea"></div>
+  <div id="empty" hidden></div>
+</div>
+
+<div id="mentionDropdown" class="mention-dropdown" hidden></div>
+
+<script>
+var GOOGLE_CLIENT_ID = '1021355643524-oprj8p68l7nueqt63vtg443a0kikqlfm.apps.googleusercontent.com';
+var TOKEN_STORAGE_KEY = 'kofune_shopping_google_token';
+var WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
+
+var idToken = null;
+var groupId = null;
+var myDisplayName = ''; // used only for optimistic (instant) UI before the server confirms
+var currentView = 'active'; // 'active' | 'archived'
+var openComments = {}; // itemId -> true if comment box expanded (kept across re-renders)
+var editingCommentId = null; // commentId currently being edited inline, or null
+var listRequestSeq = 0; // guards against applying an out-of-date GET response after a newer one
+
+// ---- @メンション機能の状態 ----
+var groupMembers = []; // [{userId, displayName, pictureUrl}] グループ内メンバー一覧(候補用)
+var pendingMentions = {}; // itemId -> [{userId, displayName}] 送信前のコメントに含まれる@メンション
+var mentionState = null; // { itemId, input, atIndex } ドロップダウン表示中のみセット
+
+// ---- コメントへのディープリンク(LINE通知の「アイテムに飛べるURL」用) ----
+// https://liff.line.me/{LIFF_ID}?itemId=xxx で開かれた場合、そのアイテムのコメント欄を開いてスクロールする。
+var deepLinkItemId = (function () {
+  try {
+    return new URLSearchParams(location.search).get('itemId') || null;
+  } catch (e) { return null; }
+})();
+var deepLinkArchivedTried = false;
+
+// ---------------------------------------------------------------------------------------
+// SYNC DESIGN
+// ---------------------------------------------------------------------------------------
+// Every server call (both reads and writes) is funneled through ONE queue and runs strictly
+// one at a time, in the order it was queued. Earlier versions of this app tried to detect and
+// paper over out-of-order network responses after the fact (a per-call sequence number), but
+// that only guarded against a response being *applied* late — it didn't stop two requests from
+// racing in flight, which is what caused real bugs: a rapid double-tap could send two deletes
+// for the same comment, and the second one would come back from the server as "not found".
+//
+// Serializing all requests removes the entire class of bug at the source: with only one
+// request ever in flight, there is nothing for it to race against. The trade-off (a little
+// less network parallelism) is a non-issue for a small shared list like this — requests are
+// small and fast, and every action still feels instant because of optimistic UI (below).
+//
+// Each item also carries a client-only `busy: true` flag while it has a request in flight
+// (for itself OR any of its comments). renderList() disables that item's controls while busy,
+// so a second tap on the same control simply can't happen — the classic "disable the button
+// until its request resolves" pattern. Structural changes (removing an item/comment, or an
+// item moving out of the current tab) are only ever applied once the server confirms them; we
+// never speculatively remove-then-possibly-reinsert, since that round trip is exactly what
+// produced the old flicker. Only ADDING a brand new item/comment is shown optimistically
+// (marked busy) — there's no prior state to flicker back to, so the worst case on failure is a
+// clean "it appeared, then was removed with an error", which is normal, expected feedback.
+var requestQueue = Promise.resolve();
+function enqueue(taskFn) {
+  var result = requestQueue.then(taskFn);
+  requestQueue = result; // taskFn always resolves internally (see callApi/catch below) — this chain never rejects
+  return result;
+}
+
+function nowIso() { return new Date().toISOString(); }
+
+// itemsCache[view] is the single source of truth for that tab's items. currentItems is kept
+// only as a convenience mirror of itemsCache[currentView], for the tab actually on screen.
+var currentItems = [];
+var itemsCache = { active: null, archived: null };
+
+function getViewItems(view) { return itemsCache[view] || []; }
+function setViewItems(view, items) {
+  itemsCache[view] = items;
+  if (view === currentView) {
+    currentItems = items;
+    renderList(items);
+    if (deepLinkItemId) tryHandleDeepLink();
+  }
+}
+
+// LINEのメンション通知から開かれた場合、対象アイテムのコメント欄を開いてスクロールする。
+// アクティブ一覧に見当たらなければ、一度だけ削除済み一覧を試す(アーカイブ済みアイテムへのコメントの場合)。
+function tryHandleDeepLink() {
+  if (!deepLinkItemId) return;
+  var idx = findIndexInView(currentView, deepLinkItemId);
+  if (idx !== -1) {
+    var targetId = deepLinkItemId;
+    deepLinkItemId = null;
+    openComments[targetId] = true;
+    renderList(getViewItems(currentView));
+    var el = document.querySelector('[data-comments-for="' + cssEscape(targetId) + '"]');
+    if (el) {
+      el.hidden = false;
+      var card = el.closest('.item-card');
+      if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    return;
+  }
+  if (currentView === 'active' && !deepLinkArchivedTried) {
+    deepLinkArchivedTried = true;
+    switchTab('archived');
+  }
+}
+function findIndexInView(view, id) {
+  var arr = getViewItems(view);
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i].id === id) return i;
+  }
+  return -1;
+}
+
+// Keeps the local optimistic list in the same order the server returns:
+// active items newest-added-first, then done items grouped below, also newest-first.
+// (Archived view keeps whatever order the server gave us.)
+function sortItemsForView(items, view) {
+  if (view === 'archived') return items;
+  var copy = items.slice();
+  copy.sort(function (a, b) {
+    var aDone = a.status === 'done' ? 1 : 0;
+    var bDone = b.status === 'done' ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    if (a.addedAt === b.addedAt) return 0;
+    return a.addedAt > b.addedAt ? -1 : 1;
+  });
+  return copy;
+}
+
+function showError(msg) {
+  document.getElementById('loading').hidden = true;
+  var el = document.getElementById('error');
+  el.hidden = false;
+  el.textContent = msg;
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  var mm = d.getMonth() + 1, dd = d.getDate();
+  var hh = ('0' + d.getHours()).slice(-2), mi = ('0' + d.getMinutes()).slice(-2);
+  return mm + '/' + dd + ' ' + hh + ':' + mi;
+}
+
+// True while the user is still composing text via IME (e.g. converting kana to kanji).
+// The Enter key press that CONFIRMS the conversion also fires a keydown with key === 'Enter',
+// which must NOT be treated as "submit" — otherwise a half-typed comment gets sent the moment
+// the user presses Enter to finalize kanji conversion. keyCode 229 is the standard marker for
+// "this keydown belongs to an IME composition", kept as a fallback since isComposing support/
+// timing varies across browsers and LINE's in-app WebView.
+function isComposingEvent(e) {
+  return !!(e.isComposing || e.keyCode === 229);
+}
+
+function rawApiCall(body) {
+  body.googleIdToken = idToken;
+  return fetch(WEBAPP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(body),
+    cache: 'no-store'
+  })
+    .then(function (res) { return res.text(); })
+    .then(function (text) {
+      var json;
+      try {
+        json = JSON.parse(text);
+      } catch (e) {
+        // Occasionally the LINE in-app browser / Google's redirect layer returns an HTML
+        // page instead of the JSON our server actually sent. This is a transient glitch,
+        // not a real failure of the request — the server side may well have succeeded.
+        var parseErr = new Error('サーバーの応答を読み取れませんでした');
+        parseErr.invalidResponse = true;
+        throw parseErr;
+      }
+      return json;
+    })
+    .then(function (json) {
+      if (!json.ok) { throw new Error(json.error || '処理に失敗しました'); }
+      return json;
+    });
+}
+
+// GoogleのIDトークンは1時間で切れる。ページを開いたままにして期限が切れたら、
+// 保存しているトークンを消して再読み込みする（自動ログインで新しいトークンを取り直す）。
+var tokenExpiredReloadTriggered = false;
+function isTokenExpiredError(err) {
+  var msg = String((err && err.message) || '');
+  return msg.indexOf('GoogleIdToken expired') !== -1;
+}
+function reloadForExpiredToken() {
+  if (tokenExpiredReloadTriggered) return;
+  tokenExpiredReloadTriggered = true;
+  clearStoredToken();
+  location.reload();
+}
+
+// Wrapper used by all callers. Read-only "get" actions are safe to silently retry once
+// on the transient HTML-instead-of-JSON glitch, since repeating a read has no side effects.
+// Mutating actions are NOT retried here (that could double-submit); each handler below deals
+// with its own failure instead.
+function callApi(body) {
+  var isReadOnly = body.action === 'shopping_list_get' || body.action === 'shopping_list_get_archived';
+  return rawApiCall(body).catch(function (err) {
+    if (isTokenExpiredError(err)) {
+      reloadForExpiredToken();
+      return new Promise(function () {}); // page is reloading; never resolve this call
+    }
+    if (isReadOnly && err.invalidResponse) {
+      return new Promise(function (resolve) { setTimeout(resolve, 500); })
+        .then(function () { return rawApiCall(body); })
+        .catch(function (err2) {
+          if (isTokenExpiredError(err2)) {
+            reloadForExpiredToken();
+            return new Promise(function () {});
+          }
+          if (err2.invalidResponse) {
+            throw new Error('通信が不安定なため読み込めませんでした。もう一度お試しください。');
+          }
+          throw err2;
+        });
+    }
+    throw err;
+  });
+}
+
+function setTabsDisabled(disabled) {
+  document.getElementById('viewSwitchBtn').disabled = disabled;
+}
+
+function applyViewChrome(view) {
+  var isArchived = view === 'archived';
+  document.getElementById('viewSwitchBtn').textContent = isArchived ? '← 買い物リストに戻る' : '🗑 削除済みを見る';
+  document.getElementById('addBox').hidden = isArchived;
+  document.getElementById('archivedBanner').hidden = !isArchived;
+  document.body.classList.toggle('archived-mode', isArchived);
+  document.getElementById('pageTitle').textContent = isArchived ? '🗑 削除済みリスト' : '🛒 買い物リスト';
+  document.getElementById('pageLead').textContent = isArchived
+    ? '削除されたアイテムの一覧です。買い物リスト本体には表示されません。削除から14日経過すると自動的に完全削除されます。'
+    : 'メンバー全員で共有できる買い物リストです。追加・完了・コメント・削除ができます。';
+}
+
+function switchTab(view) {
+  if (view === currentView) return;
+  currentView = view;
+  applyViewChrome(view);
+  loadList();
+}
+
+function loadList() {
+  var seq = ++listRequestSeq;
+  var viewAtRequest = currentView;
+  var listArea = document.getElementById('listArea');
+  var emptyEl = document.getElementById('empty');
+  var loadingEl = document.getElementById('listLoading');
+
+  var cached = itemsCache[viewAtRequest];
+  if (cached) {
+    // Stale-while-revalidate: we've shown this tab before, so paint it instantly
+    // from the cached data and refresh from the server quietly in the background.
+    currentItems = cached;
+    renderList(currentItems);
+    loadingEl.hidden = true;
+    listArea.classList.remove('is-loading');
+  } else {
+    // First time loading this tab — nothing to show yet, so use the loading state.
+    setTabsDisabled(true);
+    listArea.classList.add('is-loading');
+    emptyEl.hidden = true;
+    listArea.innerHTML = ''; loadingEl.hidden = false;
+  }
+
+  enqueue(function () {
+    var action = viewAtRequest === 'archived' ? 'shopping_list_get_archived' : 'shopping_list_get';
+    return callApi({ action: action })
+      .then(function (json) {
+        if (seq !== listRequestSeq) return; // a newer request already superseded this one
+        setViewItems(viewAtRequest, json.items);
+        loadingEl.hidden = true;
+        listArea.classList.remove('is-loading');
+        setTabsDisabled(false);
+      })
+      .catch(function (err) {
+        if (seq !== listRequestSeq) return;
+        loadingEl.hidden = true;
+        listArea.classList.remove('is-loading');
+        setTabsDisabled(false);
+        // If we already had cached data showing, fail silently — the user still sees a good list.
+        if (!cached) alert('読み込みに失敗しました: ' + err.message);
+      });
+  });
+}
+
+function renderList(items) {
+  var listArea = document.getElementById('listArea');
+  var emptyEl = document.getElementById('empty');
+  listArea.innerHTML = '';
+
+  if (!items || items.length === 0) {
+    emptyEl.hidden = false;
+    emptyEl.textContent = currentView === 'archived' ? '削除済みのアイテムはありません。' : '買い物リストは空です。上の欄から追加してください。';
+    return;
+  }
+  emptyEl.hidden = true;
+
+  var doneHeadingInserted = false; var unfinishedHeadingInserted = false; items.forEach(function (it) {
+    var busy = !!it.busy;
+    var isArchivedView = currentView === 'archived';
+    if (!isArchivedView && it.status !== 'done' && !unfinishedHeadingInserted) { unfinishedHeadingInserted = true; var unfinishedHeading = document.createElement('div'); unfinishedHeading.className = 'unfinished-heading'; unfinishedHeading.innerHTML = '<div class="unfinished-heading-title">未完了</div>'; listArea.appendChild(unfinishedHeading); }
+    if (!isArchivedView && it.status === 'done' && !doneHeadingInserted) { doneHeadingInserted = true; var doneHeading = document.createElement('div'); doneHeading.className = 'done-heading'; doneHeading.innerHTML = '<div class="done-heading-title">完了済</div>' + '<div class="done-heading-note">完了してから14日経過すると自動的に削除されます。</div>'; listArea.appendChild(doneHeading); } var card = document.createElement('div');
+    card.className = 'item-card' + (it.status === 'done' ? ' done' : '') + (busy ? ' busy' : '') + (isArchivedView ? ' archived-card' : '');
+
+    var metaLine = '追加: ' + esc(it.addedBy) + '（' + fmtDateTime(it.addedAt) + '）';
+    if (it.status === 'done' && it.completedBy) {
+      metaLine += ' / 完了: ' + esc(it.completedBy) + '（' + fmtDateTime(it.completedAt) + '）';
+    }
+    if (it.status === 'archived' && it.archivedBy) {
+      metaLine += ' / 削除: ' + esc(it.archivedBy) + '（' + fmtDateTime(it.archivedAt) + '）';
+    }
+
+    var actionsHtml = '';
+    if (currentView === 'archived') {
+      actionsHtml = '<div class="item-actions"><button class="icon-btn restore-btn" data-action="restore" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>復元</button></div>';
+    } else {
+      actionsHtml = '<div class="item-actions"><button class="icon-btn" data-action="archive" data-id="' + esc(it.id) + '" title="削除"' + (busy ? ' disabled' : '') + '>🗑</button></div>';
+    }
+
+    var checkboxHtml = currentView === 'archived'
+      ? ''
+      : '<input type="checkbox" data-action="toggle" data-id="' + esc(it.id) + '" ' + (it.status === 'done' ? 'checked' : '') + (busy ? ' disabled' : '') + '>';
+
+    var commentsCount = (it.comments || []).length;
+    var commentsHtml = '<div class="comments"' + (openComments[it.id] ? '' : ' hidden') + ' data-comments-for="' + esc(it.id) + '">';
+    (it.comments || []).forEach(function (c) {
+      var isMine = currentView !== 'archived' && c.author === myDisplayName;
+      if (editingCommentId === c.id) {
+        commentsHtml += '<div class="comment-edit-box">' +
+          '<input type="text" maxlength="300" value="' + esc(c.text) + '" data-comment-edit-input="' + esc(c.id) + '"' + (busy ? ' disabled' : '') + '>' +
+          '<button data-action="comment-save" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>保存</button>' +
+          '<button data-action="comment-cancel" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>キャンセル</button>' +
+          '</div>';
+      } else {
+        var lineStyle = c.deleting ? ' style="opacity:0.5;text-decoration:line-through;"' : '';
+        commentsHtml += '<div class="comment-line"' + lineStyle + '>' +
+          '<div class="comment-body"><span class="author">' + esc(c.author) + '</span>：' + esc(c.text) +
+          '　<span style="color:#a39a8d;">(' + fmtDateTime(c.createdAt) + ')</span>' +
+          (c.pending ? '　<span style="color:#a39a8d;">送信中…</span>' : '') +
+          '</div>' +
+          (isMine
+            ? '<div class="comment-mini-actions">' +
+                '<button class="comment-mini-btn" data-action="comment-edit-start" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>編集</button>' +
+                '<button class="comment-mini-btn" data-action="comment-delete" data-comment-id="' + esc(c.id) + '" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>削除</button>' +
+              '</div>'
+            : '') +
+          '</div>';
+      }
+    });
+    if (currentView !== 'archived') {
+      commentsHtml += '<div class="comment-add">' +
+        '<input type="text" placeholder="コメントを入力" maxlength="300" data-comment-input="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>' +
+        '<button data-action="comment" data-id="' + esc(it.id) + '"' + (busy ? ' disabled' : '') + '>送信</button>' +
+        '</div>';
+    }
+    commentsHtml += '</div>';
+
+    card.innerHTML =
+      '<div class="item-row">' +
+        checkboxHtml +
+        '<div class="item-main">' +
+          '<div class="item-text">' + esc(it.text) + (busy ? '　<span style="color:#a39a8d;font-weight:normal;font-size:11.5px;">処理中…</span>' : '') + '</div>' +
+          '<div class="item-meta">' + metaLine + '</div>' +
+          '<button class="comment-toggle" data-action="toggle-comments" data-id="' + esc(it.id) + '">💬 コメント' + (commentsCount ? '（' + commentsCount + '）' : '') + '</button>' +
+        '</div>' +
+        actionsHtml +
+      '</div>' +
+      commentsHtml;
+
+    listArea.appendChild(card);
+  });
+}
+
+function handleListAreaClick(e) {
+  var target = e.target;
+  var action = target.getAttribute('data-action');
+  if (!action) return;
+  var id = target.getAttribute('data-id');
+  var view = currentView; // the mutation belongs to whichever tab was actually on screen at click time
+
+  if (action === 'toggle') {
+    var idx = findIndexInView(view, id);
+    if (idx === -1) return;
+    var item = getViewItems(view)[idx];
+    if (item.busy) return; // a request for this item is already in flight; ignore the extra tap
+    var checked = target.checked;
+    var apiAction = checked ? 'shopping_list_complete' : 'shopping_list_uncomplete';
+    var previous = item;
+
+    // Optimistic UI: patch the FULL item locally (not just a CSS class) so the
+    // "完了: 名前（日時）" meta line appears/disappears instantly too.
+    var patched = Object.assign({}, item, { busy: true });
+    if (checked) {
+      patched.status = 'done';
+      patched.completedBy = myDisplayName || patched.completedBy || '';
+      patched.completedAt = nowIso();
+    } else {
+      patched.status = 'active';
+      patched.completedBy = '';
+      patched.completedAt = '';
+    }
+    var arr = getViewItems(view).slice();
+    arr[idx] = patched;
+    setViewItems(view, sortItemsForView(arr, view));
+
+    enqueue(function () {
+      return callApi({ action: apiAction, itemId: id })
+        .then(function (json) {
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            // The update most likely went through on the server; just refresh to confirm.
+            loadList();
+            return;
+          }
+          alert('更新に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = previous;
+          setViewItems(view, sortItemsForView(arr2, view));
+        });
+    });
+    return;
+  }
+
+  if (action === 'archive') {
+    var archIdx = findIndexInView(view, id);
+    if (archIdx === -1) return;
+    var archItem = getViewItems(view)[archIdx];
+    if (archItem.busy) return;
+    if (!confirm('このアイテムを削除しますか？（削除済みリストから復元できます）')) return;
+
+    // Mark it busy but keep it visible until the server confirms — removing it immediately
+    // and re-inserting it on failure is exactly the kind of round trip that used to flicker.
+    var archPrevious = archItem;
+    var arr = getViewItems(view).slice();
+    arr[archIdx] = Object.assign({}, archItem, { busy: true });
+    setViewItems(view, arr);
+
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_archive', itemId: id })
+        .then(function (json) {
+          // 削除済みタブもアクティブタブと同じstale-while-revalidate方式のため、ここで強制無効化しない
+          setViewItems(view, json.items); // server's active list no longer includes this item
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            loadList();
+            return;
+          }
+          alert('削除に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = archPrevious;
+          setViewItems(view, arr2);
+        });
+    });
+    return;
+  }
+
+  if (action === 'restore') {
+    var restIdx = findIndexInView(view, id);
+    if (restIdx === -1) return;
+    var restItem = getViewItems(view)[restIdx];
+    if (restItem.busy) return;
+    var restPrevious = restItem;
+
+    var arr = getViewItems(view).slice();
+    arr[restIdx] = Object.assign({}, restItem, { busy: true });
+    setViewItems(view, arr);
+
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_restore', itemId: id })
+        .then(function (json) {
+          // 同上の理由でここも強制無効化しない
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            loadList();
+            return;
+          }
+          alert('復元に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = restPrevious;
+          setViewItems(view, arr2);
+        });
+    });
+    return;
+  }
+
+  if (action === 'toggle-comments') {
+    openComments[id] = !openComments[id];
+    var box = document.querySelector('[data-comments-for="' + cssEscape(id) + '"]');
+    if (box) box.hidden = !openComments[id];
+    return;
+  }
+
+  if (action === 'comment') {
+    var cmtIdx = findIndexInView(view, id);
+    if (cmtIdx === -1) return;
+    var cmtItem = getViewItems(view)[cmtIdx];
+    if (cmtItem.busy) return;
+
+    var input = document.querySelector('[data-comment-input="' + cssEscape(id) + '"]');
+    var text = input ? input.value.trim() : '';
+    if (!text) { alert('コメント内容を入力してください'); return; }
+
+    // @メンションで選択されたメンバーのうち、最終的な本文にまだ「@表示名」が
+    // 残っているものだけを通知対象にする(選択後に手で消された分は対象外)。
+    var mentions = (pendingMentions[id] || []).filter(function (m) {
+      return text.indexOf('@' + m.displayName) !== -1;
+    });
+    var mentionUserIds = mentions.map(function (m) { return m.userId; });
+    delete pendingMentions[id];
+    closeMentionDropdown();
+
+    openComments[id] = true; // keep the box open across the re-render this triggers
+
+    // Optimistic UI: append the comment locally and re-render immediately. A brand new
+    // comment has no prior state to flicker back to, so this is safe to show right away.
+    var patchedItem = Object.assign({}, cmtItem, { busy: true });
+    patchedItem.comments = (patchedItem.comments || []).concat([{
+      id: '__temp_' + Date.now(),
+      author: myDisplayName || '自分',
+      text: text,
+      createdAt: nowIso(),
+      pending: true
+    }]);
+    var arr = getViewItems(view).slice();
+    arr[cmtIdx] = patchedItem;
+    setViewItems(view, arr);
+    if (input) input.value = '';
+
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_comment', itemId: id, comment: text, mentionUserIds: mentionUserIds })
+        .then(function (json) {
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            // The comment most likely went through; refresh to show the real state.
+            loadList();
+            return;
+          }
+          alert('コメント送信に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = cmtItem; // full revert: drops the temp comment, clears busy
+          setViewItems(view, arr2);
+          if (input) input.value = text;
+        });
+    });
+    return;
+  }
+
+  if (action === 'comment-edit-start') {
+    var startItemIdx = findIndexInView(view, id);
+    if (startItemIdx !== -1 && getViewItems(view)[startItemIdx].busy) return;
+    var startCommentId = target.getAttribute('data-comment-id');
+    editingCommentId = startCommentId;
+    renderList(currentItems);
+    return;
+  }
+
+  if (action === 'comment-cancel') {
+    editingCommentId = null;
+    renderList(currentItems);
+    return;
+  }
+
+  if (action === 'comment-save') {
+    var saveItemIdx = findIndexInView(view, id);
+    if (saveItemIdx === -1) return;
+    var saveItem = getViewItems(view)[saveItemIdx];
+    if (saveItem.busy) return;
+
+    var saveCommentId = target.getAttribute('data-comment-id');
+    var editInput = document.querySelector('[data-comment-edit-input="' + cssEscape(saveCommentId) + '"]');
+    var newText = editInput ? editInput.value.trim() : '';
+    if (!newText) { alert('コメント内容を入力してください'); return; }
+
+    editingCommentId = null;
+    var savedItem = Object.assign({}, saveItem, { busy: true });
+    savedItem.comments = (savedItem.comments || []).map(function (c) {
+      return c.id === saveCommentId ? Object.assign({}, c, { text: newText }) : c;
+    });
+    var arr = getViewItems(view).slice();
+    arr[saveItemIdx] = savedItem;
+    setViewItems(view, arr);
+
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_comment_edit', commentId: saveCommentId, comment: newText })
+        .then(function (json) {
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            loadList();
+            return;
+          }
+          alert('コメントの修正に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = saveItem;
+          setViewItems(view, arr2);
+        });
+    });
+    return;
+  }
+
+  if (action === 'comment-delete') {
+    var delItemIdx = findIndexInView(view, id);
+    if (delItemIdx === -1) return;
+    var delItem = getViewItems(view)[delItemIdx];
+    if (delItem.busy) return;
+    if (!confirm('このコメントを削除しますか？')) return;
+
+    var delCommentId = target.getAttribute('data-comment-id');
+    // Mark the comment as "deleting" in place instead of removing it right away, so a
+    // failed delete never has to bring it back — no removal, no flicker.
+    var patchedDel = Object.assign({}, delItem, { busy: true });
+    patchedDel.comments = (patchedDel.comments || []).map(function (c) {
+      return c.id === delCommentId ? Object.assign({}, c, { deleting: true }) : c;
+    });
+    var arr = getViewItems(view).slice();
+    arr[delItemIdx] = patchedDel;
+    setViewItems(view, arr);
+
+    enqueue(function () {
+      return callApi({ action: 'shopping_list_comment_delete', commentId: delCommentId })
+        .then(function (json) {
+          setViewItems(view, json.items);
+        })
+        .catch(function (err) {
+          if (err.invalidResponse) {
+            loadList();
+            return;
+          }
+          alert('コメントの削除に失敗しました: ' + err.message);
+          var arr2 = getViewItems(view).slice();
+          var idx2 = findIndexInView(view, id);
+          if (idx2 !== -1) arr2[idx2] = delItem; // full revert: clears both "deleting" and busy
+          setViewItems(view, arr2);
+        });
+    });
+    return;
+  }
+}
+
+function cssEscape(s) {
+  return String(s).replace(/["\\]/g, '\\$&');
+}
+
+// ---- @メンション機能 ----
+// コメント入力欄で「@」に続けて入力すると、グループ内メンバーの候補を出す。
+// 選択すると「@表示名 」がその場に挿入され、送信時にLINEグループへメンション付きで通知される。
+function loadGroupMembers() {
+  // メンション候補はスタッフマスタから取得するため、個人チャット(groupIdなし)でも取得する
+  callApi({ action: 'shopping_list_group_members' })
+    .then(function (json) { groupMembers = json.members || []; })
+    .catch(function () { /* メンション候補が取れなくても通常の利用に支障はないため無視する */ });
+}
+
+function closeMentionDropdown() {
+  mentionState = null;
+  var dd = document.getElementById('mentionDropdown');
+  dd.hidden = true;
+  dd.innerHTML = '';
+  dd.__matches = null;
+}
+
+function openMentionDropdown(input, itemId, atIndex, query) {
+  var q = query.toLowerCase();
+  var matches = groupMembers.filter(function (m) {
+    return m.displayName && m.displayName.toLowerCase().indexOf(q) !== -1;
+  }).slice(0, 8);
+  var dd = document.getElementById('mentionDropdown');
+  if (matches.length === 0) { closeMentionDropdown(); return; }
+  mentionState = { itemId: itemId, input: input, atIndex: atIndex };
+  dd.__matches = matches;
+  dd.innerHTML = matches.map(function (m, i) {
+    return '<div class="mention-option' + (i === 0 ? ' active' : '') + '" data-idx="' + i + '">' + esc(m.displayName) + '</div>';
+  }).join('');
+  var rect = input.getBoundingClientRect();
+  dd.style.left = Math.max(8, rect.left) + 'px';
+  dd.style.top = (rect.bottom + 4) + 'px';
+  dd.style.width = rect.width + 'px';
+  dd.hidden = false;
+}
+
+function selectMention(idx) {
+  var dd = document.getElementById('mentionDropdown');
+  var m = dd.__matches && dd.__matches[idx];
+  if (!m || !mentionState) return;
+  var input = mentionState.input;
+  var itemId = mentionState.itemId;
+  var atIndex = mentionState.atIndex;
+  var caret = input.selectionStart;
+  var before = input.value.slice(0, atIndex);
+  var after = input.value.slice(caret);
+  var inserted = '@' + m.displayName + ' ';
+  input.value = before + inserted + after;
+  var newCaret = (before + inserted).length;
+  input.focus();
+  input.setSelectionRange(newCaret, newCaret);
+
+  if (!pendingMentions[itemId]) pendingMentions[itemId] = [];
+  if (!pendingMentions[itemId].some(function (x) { return x.userId === m.userId; })) {
+    pendingMentions[itemId].push({ userId: m.userId, displayName: m.displayName });
+  }
+  closeMentionDropdown();
+}
+
+document.getElementById('listArea').addEventListener('input', function (e) {
+  if (!e.target.hasAttribute || !e.target.hasAttribute('data-comment-input')) return;
+  var input = e.target;
+  var itemId = input.getAttribute('data-comment-input');
+  var caret = input.selectionStart;
+  var textBeforeCaret = input.value.slice(0, caret);
+  var match = /(?:^|\s)@([^\s@]*)$/.exec(textBeforeCaret);
+  if (match && groupMembers.length) {
+    var atIndex = textBeforeCaret.length - match[1].length - 1; // '@'の位置
+    openMentionDropdown(input, itemId, atIndex, match[1]);
+  } else {
+    closeMentionDropdown();
+  }
+});
+
+document.getElementById('listArea').addEventListener('focusout', function (e) {
+  if (e.target.hasAttribute && e.target.hasAttribute('data-comment-input')) {
+    // ドロップダウンの選択クリックより先にblurが発生するため、少し待ってから閉じる
+    var input = e.target;
+    setTimeout(function () {
+      if (mentionState && mentionState.input === input) closeMentionDropdown();
+    }, 150);
+  }
+});
+
+document.getElementById('mentionDropdown').addEventListener('mousedown', function (e) {
+  var opt = e.target.closest && e.target.closest('.mention-option');
+  if (!opt) return;
+  e.preventDefault(); // input側のblurより先に発火させ、フォーカスを奪わないようにする
+  selectMention(Number(opt.getAttribute('data-idx')));
+});
+
+var addBusy = false; // guards the add button itself against a rapid double-tap creating duplicates
+
+function handleAdd() {
+  if (addBusy) return;
+  var input = document.getElementById('newItemText');
+  var text = input.value.trim();
+  if (!text) { alert('品名を入力してください'); return; }
+  var view = currentView;
+
+  addBusy = true;
+  document.getElementById('addBtn').disabled = true;
+  input.disabled = true;
+
+  // Optimistic UI: insert a temporary item and render it immediately. New items are
+  // sorted newest-first (see sortItemsForView), so it will appear at the top of the list.
+  var tempId = '__temp_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+  var tempItem = {
+    id: tempId,
+    text: text,
+    status: 'active',
+    addedBy: myDisplayName || '自分',
+    addedAt: nowIso(),
+    completedBy: '', completedAt: '', archivedBy: '', archivedAt: '',
+    comments: [],
+    busy: true
+  };
+  var arr = sortItemsForView(getViewItems(view).concat([tempItem]), view);
+  setViewItems(view, arr);
+  input.value = '';
+
+  enqueue(function () {
+    return callApi({ action: 'shopping_list_add', text: text })
+      .then(function (json) {
+        setViewItems(view, json.items);
+      })
+      .catch(function (err) {
+        if (err.invalidResponse) {
+          // The item was most likely added; refresh to show the real state.
+          loadList();
+          return;
+        }
+        // Roll back the temporary item.
+        var arr2 = getViewItems(view).filter(function (it) { return it.id !== tempId; });
+        setViewItems(view, arr2);
+        input.value = text;
+        alert('追加に失敗しました: ' + err.message);
+      })
+      .then(function () {
+        addBusy = false;
+        document.getElementById('addBtn').disabled = false;
+        document.getElementById('newItemText').disabled = false;
+      });
+  });
+}
+
+document.getElementById('viewSwitchBtn').addEventListener('click', function () {
+  switchTab(currentView === 'archived' ? 'active' : 'archived');
+});
+document.getElementById('addBtn').addEventListener('click', handleAdd);
+document.getElementById('newItemText').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !isComposingEvent(e)) handleAdd();
+});
+document.getElementById('listArea').addEventListener('click', handleListAreaClick);
+document.getElementById('listArea').addEventListener('keydown', function (e) {
+  if (mentionState && e.target === mentionState.input) {
+    if (e.key === 'Escape') { closeMentionDropdown(); return; }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      selectMention(0);
+      return;
+    }
+  }
+  if (e.key !== 'Enter' || isComposingEvent(e) || !e.target) return;
+  if (e.target.hasAttribute('data-comment-input')) {
+    var id = e.target.getAttribute('data-comment-input');
+    var btn = document.querySelector('[data-action="comment"][data-id="' + cssEscape(id) + '"]');
+    if (btn) btn.click();
+  } else if (e.target.hasAttribute('data-comment-edit-input')) {
+    var commentId = e.target.getAttribute('data-comment-edit-input');
+    var saveBtn = document.querySelector('[data-action="comment-save"][data-comment-id="' + cssEscape(commentId) + '"]');
+    if (saveBtn) saveBtn.click();
+  }
+});
+
+// ---------------------------------------------------------------------------------------
+// Googleログイン（Google Identity Services）
+// ---------------------------------------------------------------------------------------
+function storageGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function storageSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 無視 */ } }
+function storageDel(k) { try { localStorage.removeItem(k); } catch (e) { /* 無視 */ } }
+function clearStoredToken() { storageDel(TOKEN_STORAGE_KEY); }
+
+function decodeJwt(token) {
+  try {
+    var p = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    var json = decodeURIComponent(atob(p).split('').map(function (c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+    }).join(''));
+    return JSON.parse(json);
+  } catch (e) { return null; }
+}
+
+// 有効期限まで2分以上残っている保存済みトークンを返す
+function getStoredToken() {
+  var t = storageGet(TOKEN_STORAGE_KEY);
+  if (!t) return null;
+  var claims = decodeJwt(t);
+  if (!claims || !claims.exp || claims.exp * 1000 < Date.now() + 120000) { clearStoredToken(); return null; }
+  return t;
+}
+
+var gsiInitialized = false;
+function withGsi(fn) {
+  if (window.google && google.accounts && google.accounts.id) { fn(); return; }
+  var tries = 0;
+  var timer = setInterval(function () {
+    tries++;
+    if (window.google && google.accounts && google.accounts.id) { clearInterval(timer); fn(); }
+    else if (tries > 100) { clearInterval(timer); showError('Googleログインを読み込めませんでした。通信状況を確認して、ページを再読み込みしてください。'); }
+  }, 100);
+}
+
+function showLogin() {
+  document.getElementById('loading').hidden = true;
+  document.getElementById('login').hidden = false;
+  withGsi(function () {
+    if (!gsiInitialized) {
+      google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: function (resp) { onGoogleCredential(resp.credential); },
+        auto_select: true,
+        cancel_on_tap_outside: false,
+        use_fedcm_for_prompt: true
+      });
+      gsiInitialized = true;
+    }
+    google.accounts.id.renderButton(document.getElementById('gsiButton'), {
+      type: 'standard', theme: 'outline', size: 'large', text: 'signin_with', shape: 'pill', locale: 'ja'
+    });
+    google.accounts.id.prompt(); // 前回ログインした人は自動でログインされる
+  });
+}
+
+function onGoogleCredential(credential) {
+  if (!credential) return;
+  storageSet(TOKEN_STORAGE_KEY, credential);
+  startApp(credential);
+}
+
+function showUnregistered(email) {
+  clearStoredToken();
+  document.getElementById('login').hidden = true;
+  showError('このGoogleアカウント（' + email + '）はスタッフとして登録されていません。\n' +
+    'MUさんに登録を依頼しました。登録されたらもう一度開いてください。\n\n' +
+    '別のアカウントを使う場合は、上の「別のアカウントでログイン」を押してください。');
+  var bar = document.getElementById('accountBar');
+  document.getElementById('accountName').textContent = '';
+  bar.hidden = false;
+}
+
+function startApp(token) {
+  idToken = token;
+  document.getElementById('login').hidden = true;
+  document.getElementById('loading').hidden = false;
+  rawApiCall({ action: 'shopping_list_whoami' })
+    .then(function (json) {
+      myDisplayName = json.displayName || '';
+      document.getElementById('accountName').textContent = myDisplayName + ' としてログイン中';
+      document.getElementById('accountBar').hidden = false;
+      document.getElementById('loading').hidden = true;
+      document.getElementById('app').hidden = false;
+      loadList();
+      loadGroupMembers();
+    })
+    .catch(function (err) {
+      var msg = String((err && err.message) || '');
+      var m = msg.match(/SHOPPING_UNREGISTERED:([^\s"]+)/);
+      if (m) { showUnregistered(m[1]); return; }
+      if (isTokenExpiredError(err)) { clearStoredToken(); document.getElementById('loading').hidden = true; showLogin(); return; }
+      showError('読み込みに失敗しました: ' + msg);
+    });
+}
+
+document.getElementById('switchAccountBtn').addEventListener('click', function () {
+  clearStoredToken();
+  try { if (window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); } catch (e) { /* 無視 */ }
+  location.reload();
+});
+
+(function init() {
+  var stored = getStoredToken();
+  if (stored) startApp(stored); else showLogin();
+})();
+</script>
+</body>
+</html>
