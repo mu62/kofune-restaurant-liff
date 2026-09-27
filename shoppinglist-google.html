@@ -169,10 +169,12 @@
 
 <script>
 var GOOGLE_CLIENT_ID = '1021355643524-oprj8p68l7nueqt63vtg443a0kikqlfm.apps.googleusercontent.com';
-var TOKEN_STORAGE_KEY = 'kofune_shopping_google_token';
+var TOKEN_STORAGE_KEY = 'kofune_shopping_google_token'; // 旧方式（GoogleのIDトークン）。起動時に削除
+var SESSION_STORAGE_KEY = 'kofune_shopping_session'; // GASが発行するログイン券（180日・使うたびに延長）
 var WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
 
-var idToken = null;
+var idToken = null;        // 初回ログイン時だけ使うGoogleのIDトークン
+var sessionToken = null;   // 以後のリクエストに使うログイン券
 var groupId = null;
 var myDisplayName = ''; // used only for optimistic (instant) UI before the server confirms
 var currentView = 'active'; // 'active' | 'archived'
@@ -321,7 +323,8 @@ function isComposingEvent(e) {
 }
 
 function rawApiCall(body) {
-  body.googleIdToken = idToken;
+  if (sessionToken) body.shoppingSession = sessionToken;
+  else body.googleIdToken = idToken;
   return fetch(WEBAPP_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
@@ -354,7 +357,7 @@ function rawApiCall(body) {
 var tokenExpiredReloadTriggered = false;
 function isTokenExpiredError(err) {
   var msg = String((err && err.message) || '');
-  return msg.indexOf('GoogleIdToken expired') !== -1;
+  return msg.indexOf('GoogleIdToken expired') !== -1 || msg.indexOf('SHOPPING_SESSION_INVALID') !== -1;
 }
 function reloadForExpiredToken() {
   if (tokenExpiredReloadTriggered) return;
@@ -1041,25 +1044,12 @@ document.getElementById('listArea').addEventListener('keydown', function (e) {
 function storageGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function storageSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 無視 */ } }
 function storageDel(k) { try { localStorage.removeItem(k); } catch (e) { /* 無視 */ } }
-function clearStoredToken() { storageDel(TOKEN_STORAGE_KEY); }
+function clearStoredToken() { storageDel(TOKEN_STORAGE_KEY); storageDel(SESSION_STORAGE_KEY); sessionToken = null; }
 
-function decodeJwt(token) {
-  try {
-    var p = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    var json = decodeURIComponent(atob(p).split('').map(function (c) {
-      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-    }).join(''));
-    return JSON.parse(json);
-  } catch (e) { return null; }
-}
-
-// 有効期限まで2分以上残っている保存済みトークンを返す
-function getStoredToken() {
-  var t = storageGet(TOKEN_STORAGE_KEY);
-  if (!t) return null;
-  var claims = decodeJwt(t);
-  if (!claims || !claims.exp || claims.exp * 1000 < Date.now() + 120000) { clearStoredToken(); return null; }
-  return t;
+// 保存済みのログイン券を返す（期限はサーバー側で確認する）
+function getStoredSession() {
+  storageDel(TOKEN_STORAGE_KEY); // 旧方式の保存分は使わない
+  return storageGet(SESSION_STORAGE_KEY);
 }
 
 var gsiInitialized = false;
@@ -1096,8 +1086,7 @@ function showLogin() {
 
 function onGoogleCredential(credential) {
   if (!credential) return;
-  storageSet(TOKEN_STORAGE_KEY, credential);
-  startApp(credential);
+  startApp(null, credential);
 }
 
 function showUnregistered(email) {
@@ -1111,12 +1100,14 @@ function showUnregistered(email) {
   bar.hidden = false;
 }
 
-function startApp(token) {
-  idToken = token;
+function startApp(session, googleCredential) {
+  sessionToken = session || null;
+  idToken = googleCredential || null;
   document.getElementById('login').hidden = true;
   document.getElementById('loading').hidden = false;
   callApi({ action: 'shopping_list_whoami' })
     .then(function (json) {
+      if (json.sessionToken) { sessionToken = json.sessionToken; storageSet(SESSION_STORAGE_KEY, json.sessionToken); idToken = null; }
       myDisplayName = json.displayName || '';
       document.getElementById('accountName').textContent = (json.nickname || myDisplayName) + ' としてログイン中';
       document.getElementById('accountBar').hidden = false;
@@ -1141,7 +1132,7 @@ document.getElementById('switchAccountBtn').addEventListener('click', function (
 });
 
 (function init() {
-  var stored = getStoredToken();
+  var stored = getStoredSession();
   if (stored) startApp(stored); else showLogin();
 })();
 </script>
