@@ -859,7 +859,12 @@ function loadGroupMembers() {
   // 一覧の読み込みと同時に送らないよう、共通の順番待ち(enqueue)に並べる
   enqueue(function () {
     return callApi({ action: 'shopping_list_group_members' })
-      .then(function (json) { groupMembers = json.members || []; })
+      .then(function (json) {
+        // メンション候補はニックネームで表示・挿入する（ニックネームが無い人はLINE表示名）
+        groupMembers = (json.members || []).map(function (m) {
+          return { userId: m.userId, displayName: m.nickname || m.displayName, pictureUrl: m.pictureUrl || '' };
+        });
+      })
       .catch(function () { /* メンション候補が取れなくても通常の利用に支障はないため無視する */ });
   });
 }
