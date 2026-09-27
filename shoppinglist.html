@@ -825,6 +825,17 @@ function cssEscape(s) {
 // ---- @メンション機能 ----
 // コメント入力欄で「@」に続けて入力すると、グループ内メンバーの候補を出す。
 // 選択すると「@表示名 」がその場に挿入され、送信時にLINEグループへメンション付きで通知される。
+// 自分の表示名（スタッフマスタのニックネーム）を取得する。LINE表示名は使わない。
+function loadMyName() {
+  callApi({ action: 'shopping_list_whoami' })
+    .then(function (json) {
+      myDisplayName = (json && json.displayName) || '';
+      // 一覧が先に表示されていた場合、自分のコメントの削除ボタン等を正しく出すため描き直す
+      if (myDisplayName && itemsCache[currentView]) renderList(getViewItems(currentView));
+    })
+    .catch(function () { /* 取れなくても一覧の表示・操作はできる（名前はサーバー側で付く） */ });
+}
+
 function loadGroupMembers() {
   // メンション候補はスタッフマスタから取得するため、個人チャット(groupIdなし)でも取得する
   callApi({ action: 'shopping_list_group_members' })
@@ -1012,13 +1023,10 @@ liff.init({ liffId: LIFF_ID }).then(function () {
     var ctx = liff.getContext();
     if (ctx && ctx.groupId) groupId = ctx.groupId;
   } catch (e) { /* ignore */ }
-  try {
-    var decoded = liff.getDecodedIDToken();
-    if (decoded && decoded.name) myDisplayName = decoded.name;
-  } catch (e) { /* ignore */ }
-
+  // 自分の名前はLINE表示名ではなく、スタッフマスタのニックネームをサーバーから受け取って使う
   document.getElementById('loading').hidden = true;
   document.getElementById('app').hidden = false;
+  loadMyName();
   loadList();
   loadGroupMembers();
 }).catch(function (err) {
