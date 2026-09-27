@@ -367,29 +367,36 @@ function reloadForExpiredToken() {
 // on the transient HTML-instead-of-JSON glitch, since repeating a read has no side effects.
 // Mutating actions are NOT retried here (that could double-submit); each handler below deals
 // with its own failure instead.
+// 読み取り系（一覧・本人確認・メンバー一覧）は、通信エラーやGoogle側の一時的な応答崩れのとき
+// 間隔をあけて最大3回まで自動で再試行する（同じ内容を何度読んでも副作用はないため）。
+// 書き込み系は二重登録を避けるため再試行しない。
+var READ_ONLY_ACTIONS = ['shopping_list_get', 'shopping_list_get_archived', 'shopping_list_whoami', 'shopping_list_group_members'];
+function isRetryableError(err) {
+  if (!err) return false;
+  if (err.invalidResponse) return true;
+  var msg = String(err.message || '');
+  return err.name === 'TypeError' || /Failed to fetch|NetworkError|Load failed|network|timed out|Service invoked too many times|サーバー/i.test(msg);
+}
 function callApi(body) {
-  var isReadOnly = body.action === 'shopping_list_get' || body.action === 'shopping_list_get_archived';
-  return rawApiCall(body).catch(function (err) {
-    if (isTokenExpiredError(err)) {
-      reloadForExpiredToken();
-      return new Promise(function () {}); // page is reloading; never resolve this call
-    }
-    if (isReadOnly && err.invalidResponse) {
-      return new Promise(function (resolve) { setTimeout(resolve, 500); })
-        .then(function () { return rawApiCall(body); })
-        .catch(function (err2) {
-          if (isTokenExpiredError(err2)) {
-            reloadForExpiredToken();
-            return new Promise(function () {});
-          }
-          if (err2.invalidResponse) {
-            throw new Error('通信が不安定なため読み込めませんでした。もう一度お試しください。');
-          }
-          throw err2;
-        });
-    }
-    throw err;
-  });
+  var isReadOnly = READ_ONLY_ACTIONS.indexOf(body.action) !== -1;
+  var attempt = 0;
+  function run() {
+    attempt++;
+    return rawApiCall(body).catch(function (err) {
+      if (isTokenExpiredError(err)) {
+        reloadForExpiredToken();
+        return new Promise(function () {}); // page is reloading; never resolve this call
+      }
+      if (isReadOnly && attempt < 3 && isRetryableError(err)) {
+        return new Promise(function (resolve) { setTimeout(resolve, 700 * attempt); }).then(run);
+      }
+      if (err && err.invalidResponse) {
+        throw new Error('通信が不安定なため読み込めませんでした。もう一度お試しください。');
+      }
+      throw err;
+    });
+  }
+  return run();
 }
 
 function setTabsDisabled(disabled) {
@@ -413,6 +420,20 @@ function switchTab(view) {
   currentView = view;
   applyViewChrome(view);
   loadList();
+}
+
+function showListError(msg) {
+  var listArea = document.getElementById('listArea');
+  listArea.innerHTML = '';
+  var box = document.createElement('div');
+  box.style.cssText = 'padding:24px 8px;text-align:center;color:#b3432b;font-size:14px;line-height:1.7;white-space:pre-line;';
+  box.textContent = msg;
+  var btn = document.createElement('button');
+  btn.type = 'button'; btn.textContent = 'もう一度読み込む';
+  btn.style.cssText = 'display:block;margin:12px auto 0;padding:8px 16px;border-radius:8px;border:1px solid #1a3a2e;background:#fff;color:#1a3a2e;font-size:14px;cursor:pointer;';
+  btn.addEventListener('click', function () { loadList(); });
+  box.appendChild(btn);
+  listArea.appendChild(box);
 }
 
 function loadList() {
@@ -454,7 +475,7 @@ function loadList() {
         listArea.classList.remove('is-loading');
         setTabsDisabled(false);
         // If we already had cached data showing, fail silently — the user still sees a good list.
-        if (!cached) alert('読み込みに失敗しました: ' + err.message);
+        if (!cached) showListError('読み込みに失敗しました: ' + ((err && err.message) || err));
       });
   });
 }
@@ -835,9 +856,12 @@ function cssEscape(s) {
 // 選択すると「@表示名 」がその場に挿入され、送信時にLINEグループへメンション付きで通知される。
 function loadGroupMembers() {
   // メンション候補はスタッフマスタから取得するため、個人チャット(groupIdなし)でも取得する
-  callApi({ action: 'shopping_list_group_members' })
-    .then(function (json) { groupMembers = json.members || []; })
-    .catch(function () { /* メンション候補が取れなくても通常の利用に支障はないため無視する */ });
+  // 一覧の読み込みと同時に送らないよう、共通の順番待ち(enqueue)に並べる
+  enqueue(function () {
+    return callApi({ action: 'shopping_list_group_members' })
+      .then(function (json) { groupMembers = json.members || []; })
+      .catch(function () { /* メンション候補が取れなくても通常の利用に支障はないため無視する */ });
+  });
 }
 
 function closeMentionDropdown() {
@@ -1086,10 +1110,10 @@ function startApp(token) {
   idToken = token;
   document.getElementById('login').hidden = true;
   document.getElementById('loading').hidden = false;
-  rawApiCall({ action: 'shopping_list_whoami' })
+  callApi({ action: 'shopping_list_whoami' })
     .then(function (json) {
       myDisplayName = json.displayName || '';
-      document.getElementById('accountName').textContent = myDisplayName + ' としてログイン中';
+      document.getElementById('accountName').textContent = (json.nickname || myDisplayName) + ' としてログイン中';
       document.getElementById('accountBar').hidden = false;
       document.getElementById('loading').hidden = true;
       document.getElementById('app').hidden = false;
