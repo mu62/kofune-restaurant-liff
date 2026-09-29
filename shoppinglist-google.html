@@ -171,7 +171,8 @@
 var GOOGLE_CLIENT_ID = '1021355643524-oprj8p68l7nueqt63vtg443a0kikqlfm.apps.googleusercontent.com';
 var TOKEN_STORAGE_KEY = 'kofune_shopping_google_token'; // 旧方式（GoogleのIDトークン）。起動時に削除
 var SESSION_STORAGE_KEY = 'kofune_shopping_session'; // GASが発行するログイン券（180日・使うたびに延長）
-var LIST_CACHE_STORAGE_KEY = 'kofune_shopping_list_cache_v1'; // 前回の一覧（開いた瞬間に表示するため）
+var LIST_CACHE_STORAGE_KEY = 'kofune_shopping_list_cache_v2'; // 前回の一覧（未完了・削除済みの両方。開いた瞬間に表示するため）
+var OLD_LIST_CACHE_STORAGE_KEY = 'kofune_shopping_list_cache_v1'; // 旧形式（未完了のみ）。起動時に削除
 var ME_STORAGE_KEY = 'kofune_shopping_me_v1'; // 前回のニックネーム（ログイン中の表示用）
 var WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
 
@@ -465,12 +466,17 @@ function loadList() {
   }
 
   enqueue(function () {
-    var action = viewAtRequest === 'archived' ? 'shopping_list_get_archived' : 'shopping_list_get';
-    return callApi({ action: action })
+    // 未完了・削除済みの両方を1回の通信でまとめて取得する（タブ切り替えを即時にするため）。
+    // サーバーが古い版で get_all を知らない場合だけ、従来の片方ずつの取得に戻す。
+    var legacyAction = viewAtRequest === 'archived' ? 'shopping_list_get_archived' : 'shopping_list_get';
+    return callApi({ action: 'shopping_list_get_all' })
+      .catch(function (err) {
+        if (/不明なアクション/.test(String((err && err.message) || ''))) return callApi({ action: legacyAction });
+        throw err;
+      })
       .then(function (json) {
         if (seq !== listRequestSeq) return; // a newer request already superseded this one
-        if (viewAtRequest === 'active') saveListCache(json.items);
-        setViewItems(viewAtRequest, json.items);
+        applyServerLists(json, viewAtRequest);
         loadingEl.hidden = true;
         listArea.classList.remove('is-loading');
         setTabsDisabled(false);
@@ -609,7 +615,7 @@ function handleListAreaClick(e) {
     enqueue(function () {
       return callApi({ action: apiAction, itemId: id })
         .then(function (json) {
-          setViewItems(view, json.items);
+          applyServerLists(json, view);
         })
         .catch(function (err) {
           if (err.invalidResponse) {
@@ -645,7 +651,7 @@ function handleListAreaClick(e) {
       return callApi({ action: 'shopping_list_archive', itemId: id })
         .then(function (json) {
           // 削除済みタブもアクティブタブと同じstale-while-revalidate方式のため、ここで強制無効化しない
-          setViewItems(view, json.items); // server's active list no longer includes this item
+          applyServerLists(json, view); // server's active list no longer includes this item
         })
         .catch(function (err) {
           if (err.invalidResponse) {
@@ -677,7 +683,7 @@ function handleListAreaClick(e) {
       return callApi({ action: 'shopping_list_restore', itemId: id })
         .then(function (json) {
           // 同上の理由でここも強制無効化しない
-          setViewItems(view, json.items);
+          applyServerLists(json, view);
         })
         .catch(function (err) {
           if (err.invalidResponse) {
@@ -740,7 +746,7 @@ function handleListAreaClick(e) {
     enqueue(function () {
       return callApi({ action: 'shopping_list_comment', itemId: id, comment: text, mentionUserIds: mentionUserIds })
         .then(function (json) {
-          setViewItems(view, json.items);
+          applyServerLists(json, view);
         })
         .catch(function (err) {
           if (err.invalidResponse) {
@@ -797,7 +803,7 @@ function handleListAreaClick(e) {
     enqueue(function () {
       return callApi({ action: 'shopping_list_comment_edit', commentId: saveCommentId, comment: newText })
         .then(function (json) {
-          setViewItems(view, json.items);
+          applyServerLists(json, view);
         })
         .catch(function (err) {
           if (err.invalidResponse) {
@@ -835,7 +841,7 @@ function handleListAreaClick(e) {
     enqueue(function () {
       return callApi({ action: 'shopping_list_comment_delete', commentId: delCommentId })
         .then(function (json) {
-          setViewItems(view, json.items);
+          applyServerLists(json, view);
         })
         .catch(function (err) {
           if (err.invalidResponse) {
@@ -990,7 +996,7 @@ function handleAdd() {
   enqueue(function () {
     return callApi({ action: 'shopping_list_add', text: text })
       .then(function (json) {
-        setViewItems(view, json.items);
+        applyServerLists(json, view);
       })
       .catch(function (err) {
         if (err.invalidResponse) {
@@ -1047,17 +1053,40 @@ document.getElementById('listArea').addEventListener('keydown', function (e) {
 function storageGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function storageSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 無視 */ } }
 function storageDel(k) { try { localStorage.removeItem(k); } catch (e) { /* 無視 */ } }
-function clearStoredToken() { storageDel(TOKEN_STORAGE_KEY); storageDel(SESSION_STORAGE_KEY); storageDel(LIST_CACHE_STORAGE_KEY); storageDel(ME_STORAGE_KEY); sessionToken = null; }
+function clearStoredToken() { storageDel(TOKEN_STORAGE_KEY); storageDel(SESSION_STORAGE_KEY); storageDel(LIST_CACHE_STORAGE_KEY); storageDel(OLD_LIST_CACHE_STORAGE_KEY); storageDel(ME_STORAGE_KEY); sessionToken = null; }
 
 // 前回サーバーから取得した一覧（未完了タブ）を端末に保存し、次に開いたとき即表示する
-function saveListCache(items) {
-  try { storageSet(LIST_CACHE_STORAGE_KEY, JSON.stringify({ savedAt: Date.now(), items: items || [] })); } catch (e) { /* 無視 */ }
+function saveListCache() {
+  try {
+    var strip = function (arr) { return (arr || []).filter(function (it) { return !it.busy; }); };
+    storageSet(LIST_CACHE_STORAGE_KEY, JSON.stringify({ savedAt: Date.now(), active: strip(itemsCache.active), archived: strip(itemsCache.archived) }));
+  } catch (e) { /* 無視 */ }
 }
 function loadListCache() {
+  storageDel(OLD_LIST_CACHE_STORAGE_KEY);
   try {
     var o = JSON.parse(storageGet(LIST_CACHE_STORAGE_KEY) || 'null');
-    return o && Array.isArray(o.items) ? o.items : null;
+    if (!o) return null;
+    return { active: Array.isArray(o.active) ? o.active : null, archived: Array.isArray(o.archived) ? o.archived : null };
   } catch (e) { return null; }
+}
+
+// サーバーの返事を画面とキャッシュに反映する。新しいサーバーは未完了(active)・削除済み(archived)の
+// 両方を返すので、表示していない方のタブも裏で最新にしておく（タブ切り替え時に待たなくて済む）。
+function applyServerLists(json, view) {
+  if (json && Array.isArray(json.active) && Array.isArray(json.archived)) {
+    var other = view === 'archived' ? 'active' : 'archived';
+    // 表示中のタブ側で操作中（busy）の項目がなければ、そちらも最新に描き直す
+    var otherBusy = (itemsCache[other] || []).some(function (it) { return it.busy; });
+    if (!otherBusy) {
+      itemsCache[other] = json[other];
+      if (other === currentView) { currentItems = json[other]; renderList(currentItems); }
+    }
+    setViewItems(view, json[view]);
+  } else {
+    setViewItems(view, json.items);
+  }
+  saveListCache();
 }
 
 // 保存済みのログイン券を返す（期限はサーバー側で確認する）
@@ -1120,8 +1149,11 @@ function startApp(session, googleCredential) {
   document.getElementById('login').hidden = true;
 
   // 前回の一覧・名前があれば、サーバーの返事を待たずにすぐ表示する（裏で最新に更新）
-  var cachedItems = loadListCache();
-  if (cachedItems) itemsCache.active = cachedItems;
+  var cachedLists = loadListCache();
+  if (cachedLists) {
+    if (cachedLists.active) itemsCache.active = cachedLists.active;
+    if (cachedLists.archived) itemsCache.archived = cachedLists.archived;
+  }
   var cachedMe = storageGet(ME_STORAGE_KEY);
   if (cachedMe) {
     myDisplayName = cachedMe;
