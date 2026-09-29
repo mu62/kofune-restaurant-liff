@@ -171,6 +171,8 @@
 var GOOGLE_CLIENT_ID = '1021355643524-oprj8p68l7nueqt63vtg443a0kikqlfm.apps.googleusercontent.com';
 var TOKEN_STORAGE_KEY = 'kofune_shopping_google_token'; // 旧方式（GoogleのIDトークン）。起動時に削除
 var SESSION_STORAGE_KEY = 'kofune_shopping_session'; // GASが発行するログイン券（180日・使うたびに延長）
+var LIST_CACHE_STORAGE_KEY = 'kofune_shopping_list_cache_v1'; // 前回の一覧（開いた瞬間に表示するため）
+var ME_STORAGE_KEY = 'kofune_shopping_me_v1'; // 前回のニックネーム（ログイン中の表示用）
 var WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbw2M84vpN2YLybV58sXoXcZol559NL08K9aA3hqWq9URFpYExQt_BqUNjwvw5q2LgYfHg/exec';
 
 var idToken = null;        // 初回ログイン時だけ使うGoogleのIDトークン
@@ -467,6 +469,7 @@ function loadList() {
     return callApi({ action: action })
       .then(function (json) {
         if (seq !== listRequestSeq) return; // a newer request already superseded this one
+        if (viewAtRequest === 'active') saveListCache(json.items);
         setViewItems(viewAtRequest, json.items);
         loadingEl.hidden = true;
         listArea.classList.remove('is-loading');
@@ -1044,7 +1047,18 @@ document.getElementById('listArea').addEventListener('keydown', function (e) {
 function storageGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function storageSet(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* 無視 */ } }
 function storageDel(k) { try { localStorage.removeItem(k); } catch (e) { /* 無視 */ } }
-function clearStoredToken() { storageDel(TOKEN_STORAGE_KEY); storageDel(SESSION_STORAGE_KEY); sessionToken = null; }
+function clearStoredToken() { storageDel(TOKEN_STORAGE_KEY); storageDel(SESSION_STORAGE_KEY); storageDel(LIST_CACHE_STORAGE_KEY); storageDel(ME_STORAGE_KEY); sessionToken = null; }
+
+// 前回サーバーから取得した一覧（未完了タブ）を端末に保存し、次に開いたとき即表示する
+function saveListCache(items) {
+  try { storageSet(LIST_CACHE_STORAGE_KEY, JSON.stringify({ savedAt: Date.now(), items: items || [] })); } catch (e) { /* 無視 */ }
+}
+function loadListCache() {
+  try {
+    var o = JSON.parse(storageGet(LIST_CACHE_STORAGE_KEY) || 'null');
+    return o && Array.isArray(o.items) ? o.items : null;
+  } catch (e) { return null; }
+}
 
 // 保存済みのログイン券を返す（期限はサーバー側で確認する）
 function getStoredSession() {
@@ -1104,23 +1118,45 @@ function startApp(session, googleCredential) {
   sessionToken = session || null;
   idToken = googleCredential || null;
   document.getElementById('login').hidden = true;
-  document.getElementById('loading').hidden = false;
+
+  // 前回の一覧・名前があれば、サーバーの返事を待たずにすぐ表示する（裏で最新に更新）
+  var cachedItems = loadListCache();
+  if (cachedItems) itemsCache.active = cachedItems;
+  var cachedMe = storageGet(ME_STORAGE_KEY);
+  if (cachedMe) {
+    myDisplayName = cachedMe;
+    document.getElementById('accountName').textContent = cachedMe + ' としてログイン中';
+    document.getElementById('accountBar').hidden = false;
+  }
+  var appStarted = false;
+  function showAppAndLoad() {
+    if (appStarted) return;
+    appStarted = true;
+    document.getElementById('loading').hidden = true;
+    document.getElementById('app').hidden = false;
+    loadList();          // 本人確認（whoami）の完了を待たずに一覧の取得を始める
+    loadGroupMembers();
+  }
+  if (session) showAppAndLoad(); // ログイン券がある＝前回ログイン済み
+  else document.getElementById('loading').hidden = false;
+
   callApi({ action: 'shopping_list_whoami' })
     .then(function (json) {
       if (json.sessionToken) { sessionToken = json.sessionToken; storageSet(SESSION_STORAGE_KEY, json.sessionToken); idToken = null; }
       myDisplayName = json.displayName || '';
-      document.getElementById('accountName').textContent = (json.nickname || myDisplayName) + ' としてログイン中';
+      var shownName = json.nickname || myDisplayName;
+      if (shownName) storageSet(ME_STORAGE_KEY, shownName);
+      document.getElementById('accountName').textContent = shownName + ' としてログイン中';
       document.getElementById('accountBar').hidden = false;
-      document.getElementById('loading').hidden = true;
-      document.getElementById('app').hidden = false;
-      loadList();
-      loadGroupMembers();
+      showAppAndLoad();
     })
     .catch(function (err) {
       var msg = String((err && err.message) || '');
       var m = msg.match(/SHOPPING_UNREGISTERED:([^\s"]+)/);
-      if (m) { showUnregistered(m[1]); return; }
-      if (isTokenExpiredError(err)) { clearStoredToken(); document.getElementById('loading').hidden = true; showLogin(); return; }
+      if (m) { document.getElementById('app').hidden = true; showUnregistered(m[1]); return; }
+      if (isTokenExpiredError(err)) { document.getElementById('app').hidden = true; clearStoredToken(); document.getElementById('loading').hidden = true; showLogin(); return; }
+      // 一覧をすでに表示している場合は、本人確認の一時的な失敗では画面を消さない
+      if (appStarted) return;
       showError('読み込みに失敗しました: ' + msg);
     });
 }
